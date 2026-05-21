@@ -329,9 +329,9 @@ ${prods.map(p => `- ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocit
 Recent changes:
 ${logEntries.slice(0,10).map(l => `- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.REACT_APP_ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-calls': 'true' },
+        headers: { 'Content-Type': 'application/json',  },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
