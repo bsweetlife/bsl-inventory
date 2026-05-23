@@ -134,6 +134,7 @@ export default function App(){
 }
 
 function AppMain({session}){
+  const userEmail=session?.user?.email||'unknown';
   const[lang,setLang]=useState('en');
   const[page,setPage]=useState('dashboard');
   const[tab,setTab]=useState('all');
@@ -182,7 +183,7 @@ function AppMain({session}){
       const old=prods.find(p=>p.id===form.id);
       await supabase.from('products').update(entry).eq('id',form.id);
       const diff=(parseFloat(form.stock)||0)-old.stock;
-      await supabase.from('change_log').insert({description:diff!==0?`Stock: ${form.name} ${old.stock}→${form.stock}`:`Updated: ${form.name}`,qty_change:diff||null});
+      await supabase.from('change_log').insert({description:diff!==0?`Stock: ${form.name} ${old.stock}→${form.stock}`:`Updated: ${form.name}`,qty_change:diff||null,user_email:userEmail});
     }else{
       await supabase.from('products').insert(entry);
       await supabase.from('change_log').insert({description:`Added: ${form.name}`,qty_change:parseFloat(form.stock)||0});
@@ -194,7 +195,7 @@ function AppMain({session}){
     const p=prods.find(x=>x.id===id);
     if(!window.confirm(`Delete "${p.name}"?`))return;
     await supabase.from('products').delete().eq('id',id);
-    await supabase.from('change_log').insert({description:`Deleted: ${p.name}`});
+    await supabase.from('change_log').insert({description:`Deleted: ${p.name}`,user_email:userEmail});
     await loadAll();
   }
 
@@ -220,7 +221,7 @@ function AppMain({session}){
     const{parsed,mode}=mdata;
     if(mode==='replace'){await supabase.from('products').delete().neq('id',0);await supabase.from('products').insert(parsed);}
     else{for(const p of parsed){const existing=prods.find(x=>x.sku&&x.sku===p.sku);if(existing)await supabase.from('products').update(p).eq('id',existing.id);else await supabase.from('products').insert(p);}}
-    await supabase.from('change_log').insert({description:`Bulk import: ${parsed.length} products (${mode||'add'})`,qty_change:parsed.length});
+    await supabase.from('change_log').insert({description:`Bulk import: ${parsed.length} products (${mode||'add',user_email:userEmail})`,qty_change:parsed.length});
     await loadAll();setModal(null);
   }
 
@@ -271,9 +272,9 @@ function AppMain({session}){
       const newStock=item.prod.stock-item.singlesDeducted;
       await supabase.from('products').update({stock:newStock}).eq('id',item.prod.id);
       await supabase.from('orders_log').insert({platform:mdata.platform,order_sku:item.sku,product_id:item.prod.id,product_name:item.prod.name,qty_sold:item.singlesDeducted,stock_before:item.prod.stock,stock_after:newStock});
-      await supabase.from('change_log').insert({description:`${platLabel}: ${item.prod.name} [${item.sku}] ${item.packsOrdered} packs × ${item.packSize} = ${item.singlesDeducted} singles. ${item.prod.stock}→${newStock}`,qty_change:-item.singlesDeducted,platform:mdata.platform});
+      await supabase.from('change_log').insert({description:`${platLabel}: ${item.prod.name} [${item.sku}] ${item.packsOrdered} packs × ${item.packSize} = ${item.singlesDeducted} singles. ${item.prod.stock}→${newStock}`,qty_change:-item.singlesDeducted,platform:mdata.platform,user_email:userEmail});
     }
-    await supabase.from('change_log').insert({description:`${platLabel} upload complete`});
+    await supabase.from('change_log').insert({description:`${platLabel} upload complete`,user_email:userEmail});
     if(mdata.hash)await supabase.from('uploaded_files').insert({file_hash:mdata.hash});
     await loadAll();setModal(null);
   }
@@ -314,7 +315,7 @@ function AppMain({session}){
         const newStock=prod.stock-item.singles;
         await supabase.from('products').update({stock:newStock}).eq('id',prod.id);
         await supabase.from('customer_sale_items').insert({sale_id:sale.id,product_id:prod.id,product_name:prod.name,root_sku:prod.sku,pack_size:item.packSize||1,packs_ordered:item.totalUnits/(item.packSize||1),singles_deducted:item.singles});
-        await supabase.from('change_log').insert({description:`Direct sale to ${parsed.customer||customerName}: ${prod.name} -${item.singles} singles`,qty_change:-item.singles,platform:'direct'});
+        await supabase.from('change_log').insert({description:`Direct sale to ${parsed.customer||customerName}: ${prod.name} -${item.singles} singles`,qty_change:-item.singles,platform:'direct',user_email:userEmail});
       }
     }else{
       // Inbound — add stock
@@ -324,7 +325,7 @@ function AppMain({session}){
         if(!prod)continue;
         const newStock=prod.stock+item.singles;
         await supabase.from('products').update({stock:newStock}).eq('id',prod.id);
-        await supabase.from('change_log').insert({description:`Received from ${parsed.supplier}: ${prod.name} +${item.singles} singles`,qty_change:item.singles,platform:'inbound'});
+        await supabase.from('change_log').insert({description:`Received from ${parsed.supplier}: ${prod.name} +${item.singles} singles`,qty_change:item.singles,platform:'inbound',user_email:userEmail});
       }
     }
     await loadAll();setModal(null);
@@ -385,7 +386,7 @@ function AppMain({session}){
       if(!prod)return{success:false,error:`Product ID ${product_id} not found`};
       const old_stock=prod.stock;
       await supabase.from('products').update({stock:new_stock}).eq('id',product_id);
-      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${old_stock}→${new_stock} (${reason})`,qty_change:new_stock-old_stock});
+      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${old_stock}→${new_stock} (${reason,user_email:userEmail})`,qty_change:new_stock-old_stock});
       await loadAll();
       return{success:true,message:`Updated ${product_name}: ${old_stock} → ${new_stock} singles (${reason})`};
     }
@@ -394,7 +395,7 @@ function AppMain({session}){
       const update={};
       update[field]=isNaN(value)?value:parseFloat(value);
       await supabase.from('products').update(update).eq('id',product_id);
-      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${field} set to ${value}`});
+      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${field} set to ${value}`,user_email:userEmail});
       await loadAll();
       return{success:true,message:`Updated ${product_name}: ${field} = ${value}`};
     }
@@ -603,7 +604,7 @@ function AppMain({session}){
           </div>
 
           <div style={{display:'flex',gap:6,marginBottom:'1rem',flexWrap:'wrap'}}>
-            {[['all',t.allProducts],['alerts',`${t.alerts} (${alerts.length})`],['channels',t.channels],['log',t.log]].map(([k,l])=>(
+            {[['all',t.allProducts],['alerts',`${t.alerts} (${alerts.length})`],['channels',t.channels],['log',`📋 ${t.log} (${logEntries.length})`]].map(([k,l])=>(
               <button key={k} onClick={()=>setTab(k)} style={{...S.btn,background:tab===k?'#111':'transparent',color:tab===k?'#fff':'#555',border:tab===k?'none':'1px solid #ddd'}}>{l}</button>
             ))}
           </div>
@@ -636,6 +637,7 @@ function AppMain({session}){
                     <span style={{fontSize:10,color:'#aaa',minWidth:130,flexShrink:0}}>{new Date(l.created_at).toLocaleString()}</span>
                     {l.platform&&<span style={{fontSize:10,background:(PLAT[l.platform]?.c||'#888')+'22',color:PLAT[l.platform]?.c||'#888',padding:'1px 6px',borderRadius:99,fontWeight:600,flexShrink:0}}>{PLAT[l.platform]?.l||l.platform}</span>}
                     <span style={{flex:1}}>{l.description}</span>
+                    {l.user_email&&<span style={{fontSize:10,color:'#4a90e2',background:'#e8f0fe',padding:'1px 6px',borderRadius:99,flexShrink:0}}>{l.user_email.split('@')[0]}</span>}
                     {l.qty_change!=null&&<span style={{fontWeight:600,color:l.qty_change<0?'#dc3545':'#28a745',flexShrink:0}}>{l.qty_change>0?'+':''}{l.qty_change}</span>}
                   </div>
                 ))}
