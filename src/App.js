@@ -579,8 +579,8 @@ export default function App(){
 
       {/* MODALS */}
       {modal==='product'&&<ProductModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={saveProduct} onClose={()=>setModal(null)}/>}
-      {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} fRef={useRef()} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
-      {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} oRef={useRef()} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
+      {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
+      {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
       {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
     </div>
