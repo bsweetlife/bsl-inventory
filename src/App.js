@@ -347,7 +347,7 @@ function AppMain({session}){
     if(direction==='outbound'){
       const{data:sale}=await supabase.from('customer_sales').insert({customer_name:parsed.customer||customerName,customer_email:customerEmail||null,customer_phone:customerPhone||null,sale_date:parsed.date||new Date().toISOString().slice(0,10),platform:'direct',total_singles:parsed.totalSingles}).select().single();
       for(const item of(parsed.items||[])){
-        if(!item.matchedSku)continue;
+        if(item.included===false||!item.matchedSku)continue;
         const prod=prods.find(p=>p.sku===item.matchedSku);
         if(!prod)continue;
         const newStock=prod.stock-item.singles;
@@ -358,7 +358,7 @@ function AppMain({session}){
     }else{
       // Inbound — add stock
       for(const item of(parsed.items||[])){
-        if(!item.matchedSku)continue;
+        if(item.included===false||!item.matchedSku)continue;
         const prod=prods.find(p=>p.sku===item.matchedSku);
         if(!prod)continue;
         const newStock=prod.stock+item.singles;
@@ -831,7 +831,7 @@ function AppMain({session}){
       {modal==='product'&&<ProductModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={saveProduct} onClose={()=>setModal(null)}/>}
       {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
       {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
-      {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)}/>}
+      {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)} prods={prods}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
     </div>
   );
@@ -1012,13 +1012,34 @@ function OrdersModal({t,S,mdata,setMdata,onFile,onPreview,onConfirm,onApply,hash
 }
 
 // ── PACKING LIST MODAL ────────────────────────────────────────
-function PackingModal({t,S,mdata,setMdata,onFile,onApply,onClose}){
+function PackingModal({t,S,mdata,setMdata,onFile,onApply,onClose,prods}){
   const pRef=useRef();
   const step=mdata.step||1;
   const parsed=mdata.parsed||{};
+
+  function updateItem(i,field,value){
+    const items=[...(parsed.items||[])];
+    items[i]={...items[i],[field]:value};
+    // If SKU changed, update matchedSku and matchedName
+    if(field==='matchedSku'){
+      const prod=prods.find(p=>p.sku===value);
+      items[i].matchedName=prod?.name||value;
+    }
+    setMdata(prev=>({...prev,parsed:{...prev.parsed,items,totalSingles:items.filter(x=>x.included!==false).reduce((a,x)=>a+(parseFloat(x.singles)||0),0)}}));
+  }
+
+  function toggleItem(i){
+    const items=[...(parsed.items||[])];
+    items[i]={...items[i],included:items[i].included===false?true:false};
+    setMdata(prev=>({...prev,parsed:{...prev.parsed,items,totalSingles:items.filter(x=>x.included!==false).reduce((a,x)=>a+(parseFloat(x.singles)||0),0)}}));
+  }
+
+  const includedItems=(parsed.items||[]).filter(x=>x.included!==false);
+  const totalSingles=includedItems.reduce((a,x)=>a+(parseFloat(x.singles)||0),0);
+
   return(
     <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={S.sheet}>
+      <div style={{...S.sheet,width:680,maxWidth:'96vw'}}>
         <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>📸 {t.packingListTitle} — step {Math.min(step,3)} / 3</div>
         {step===1&&<>
           <div style={{fontSize:12,color:'#555',marginBottom:12}}>Upload a photo or PDF of the packing list. Claude will read it automatically.</div>
@@ -1038,22 +1059,26 @@ function PackingModal({t,S,mdata,setMdata,onFile,onApply,onClose}){
           </div>
         </>}
         {step===3&&<>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:'1rem'}}>
-            <div style={{background:'#f8f8f8',borderRadius:8,padding:'10px 12px',fontSize:12}}>
-              <div style={{color:'#888',marginBottom:2}}>Supplier</div>
-              <div style={{fontWeight:600}}>{parsed.supplier||'—'}</div>
+          {/* Header info — editable */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:'1rem'}}>
+            <div style={{display:'flex',flexDirection:'column',gap:3}}>
+              <label style={{fontSize:11,color:'#888',fontWeight:500}}>Supplier</label>
+              <input style={S.inp} value={parsed.supplier||''} onChange={e=>setMdata(prev=>({...prev,parsed:{...prev.parsed,supplier:e.target.value}}))}/>
             </div>
-            <div style={{background:'#f8f8f8',borderRadius:8,padding:'10px 12px',fontSize:12}}>
-              <div style={{color:'#888',marginBottom:2}}>Customer / Ship To</div>
-              <div style={{fontWeight:600}}>{parsed.customer||'—'}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:3}}>
+              <label style={{fontSize:11,color:'#888',fontWeight:500}}>Customer / Ship To</label>
+              <input style={S.inp} value={parsed.customer||''} onChange={e=>setMdata(prev=>({...prev,parsed:{...prev.parsed,customer:e.target.value}}))}/>
             </div>
-            <div style={{background:'#f8f8f8',borderRadius:8,padding:'10px 12px',fontSize:12}}>
-              <div style={{color:'#888',marginBottom:2}}>Date</div>
-              <div style={{fontWeight:600}}>{parsed.date||'—'}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:3}}>
+              <label style={{fontSize:11,color:'#888',fontWeight:500}}>Date</label>
+              <input style={S.inp} value={parsed.date||''} onChange={e=>setMdata(prev=>({...prev,parsed:{...prev.parsed,date:e.target.value}}))}/>
             </div>
-            <div style={{background:parsed.direction==='outbound'?'#FFF3CD':'#D4EDDA',borderRadius:8,padding:'10px 12px',fontSize:12}}>
-              <div style={{color:'#888',marginBottom:2}}>Direction</div>
-              <div style={{fontWeight:600,color:parsed.direction==='outbound'?'#856404':'#155724'}}>{parsed.direction==='outbound'?'📤 Outbound (deduct)':'📥 Inbound (add)'}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:3}}>
+              <label style={{fontSize:11,color:'#888',fontWeight:500}}>Direction</label>
+              <select style={S.inp} value={parsed.direction||'outbound'} onChange={e=>setMdata(prev=>({...prev,parsed:{...prev.parsed,direction:e.target.value}}))}>
+                <option value="outbound">📤 Outbound (deduct stock)</option>
+                <option value="inbound">📥 Inbound (add stock)</option>
+              </select>
             </div>
           </div>
 
@@ -1066,26 +1091,57 @@ function PackingModal({t,S,mdata,setMdata,onFile,onApply,onClose}){
             </div>
           </>}
 
-          <div style={{fontSize:12,fontWeight:500,color:'#555',marginBottom:6}}>Items found ({(parsed.items||[]).length})</div>
-          <div style={{overflowX:'auto',border:'1px solid #eee',borderRadius:10,marginBottom:'1rem',maxHeight:220,overflowY:'auto'}}>
-            <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
-              <thead><tr>{['Description','Singles','Matched SKU','Confidence'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-              <tbody>{(parsed.items||[]).map((item,i)=>(
-                <tr key={i} style={{background:!item.matchedSku?'#FFF5F5':''}}>
-                  <td style={{...S.td,maxWidth:200}} title={item.description}>{item.description}</td>
-                  <td style={{...S.td,fontWeight:600,color:parsed.direction==='outbound'?'#dc3545':'#28a745'}}>{parsed.direction==='outbound'?'-':'+' }{item.singles}</td>
-                  <td style={S.td}>{item.matchedSku?<code style={{fontSize:10,background:'#f5f5f5',padding:'1px 4px',borderRadius:3}}>{item.matchedSku}</code>:<span style={{color:'#dc3545'}}>No match</span>}</td>
-                  <td style={S.td}><span style={{background:item.confidence==='high'?'#D4EDDA':item.confidence==='medium'?'#FFF3CD':'#F8D7DA',color:item.confidence==='high'?'#155724':item.confidence==='medium'?'#856404':'#721C24',padding:'1px 6px',borderRadius:99,fontSize:10}}>{item.confidence||'—'}</span></td>
-                </tr>
-              ))}</tbody>
-            </table>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+            <div style={{fontSize:12,fontWeight:500,color:'#555'}}>Items found ({(parsed.items||[]).length}) — uncheck to exclude</div>
+            <div style={{fontSize:11,color:'#888'}}>Click any field to edit</div>
           </div>
-          <div style={{fontSize:12,fontWeight:600,color:'#555',marginBottom:'1rem'}}>Total singles: {parsed.totalSingles||0}</div>
+
+          <div style={{border:'1px solid #eee',borderRadius:10,marginBottom:'1rem',maxHeight:280,overflowY:'auto'}}>
+            {(parsed.items||[]).map((item,i)=>{
+              const excluded=item.included===false;
+              return(
+                <div key={i} style={{padding:'10px 12px',borderBottom:'1px solid #f5f5f5',background:excluded?'#f9f9f9':item.confidence==='low'||!item.matchedSku?'#FFF5F5':item.confidence==='medium'?'#FFFBF0':'#fff',opacity:excluded?0.5:1}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                    <input type="checkbox" checked={!excluded} onChange={()=>toggleItem(i)} style={{width:15,height:15,cursor:'pointer',flexShrink:0}}/>
+                    <span style={{fontSize:10,background:item.confidence==='high'?'#D4EDDA':item.confidence==='medium'?'#FFF3CD':'#F8D7DA',color:item.confidence==='high'?'#155724':item.confidence==='medium'?'#856404':'#721C24',padding:'1px 7px',borderRadius:99,flexShrink:0}}>{item.confidence||'—'}</span>
+                    <span style={{fontSize:11,color:'#555',flex:1}} title={item.description}>{item.description}</span>
+                  </div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 80px',gap:8,paddingLeft:23}}>
+                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                      <label style={{fontSize:10,color:'#aaa'}}>Matched SKU</label>
+                      <select style={{...S.inp,fontSize:11,padding:'4px 6px'}} value={item.matchedSku||''} onChange={e=>updateItem(i,'matchedSku',e.target.value)} disabled={excluded}>
+                        <option value="">— No match —</option>
+                        {prods.map(p=><option key={p.id} value={p.sku}>{p.sku} — {p.name}</option>)}
+                      </select>
+                    </div>
+                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                      <label style={{fontSize:10,color:'#aaa'}}>Description</label>
+                      <input style={{...S.inp,fontSize:11,padding:'4px 6px'}} value={item.description||''} onChange={e=>updateItem(i,'description',e.target.value)} disabled={excluded}/>
+                    </div>
+                    <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                      <label style={{fontSize:10,color:'#aaa'}}>Singles</label>
+                      <input style={{...S.inp,fontSize:11,padding:'4px 6px',fontWeight:600,color:parsed.direction==='outbound'?'#dc3545':'#28a745'}} type="number" value={item.singles||0} onChange={e=>updateItem(i,'singles',parseFloat(e.target.value)||0)} disabled={excluded}/>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
+            <div style={{fontSize:12,color:'#555'}}>
+              <span style={{fontWeight:600}}>{includedItems.length}</span> of {(parsed.items||[]).length} items included
+            </div>
+            <div style={{fontSize:13,fontWeight:700,color:parsed.direction==='outbound'?'#dc3545':'#28a745'}}>
+              {parsed.direction==='outbound'?'−':'+' }{totalSingles} singles
+            </div>
+          </div>
+
           <div style={{display:'flex',gap:8,justifyContent:'space-between'}}>
             <button style={S.btn} onClick={()=>setMdata(prev=>({...prev,step:1,parsed:null}))}>← Back</button>
             <div style={{display:'flex',gap:8}}>
               <button style={S.btn} onClick={onClose}>{t.cancel}</button>
-              <button style={{...S.btn,background:'#28a745',color:'#fff',border:'none'}} onClick={onApply}>{t.applyDeductions}</button>
+              <button style={{...S.btn,background:'#28a745',color:'#fff',border:'none'}} onClick={onApply} disabled={includedItems.length===0}>{t.applyDeductions} ({includedItems.length} items)</button>
             </div>
           </div>
         </>}
