@@ -768,9 +768,9 @@ function AppMain({session}){
             {/* Velocity report */}
             <div style={S.card}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
-              <div style={{fontSize:15,fontWeight:600}}>📈 {t.velocityReport}</div>
-              <button style={{...S.btn,fontSize:11,color:'#4a90e2',borderColor:'#4a90e2'}} onClick={async()=>{await recalculateVelocity();await loadAll();alert('Velocity recalculated from last 30 days of orders!');}}>🔄 Recalculate</button>
-            </div>
+                <div style={{fontSize:15,fontWeight:600}}>📈 {t.velocityReport}</div>
+                <button style={{...S.btn,fontSize:11,color:'#4a90e2',borderColor:'#4a90e2'}} onClick={async()=>{await recalculateVelocity();await loadAll();alert('Velocity recalculated from last 30 days of orders!');}}>🔄 Recalculate</button>
+              </div>
               <div style={{overflowX:'auto',border:'1px solid #eee',borderRadius:12}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                   <thead><tr>{['Product','Monthly Sales','Daily Rate','Days of Supply','Value at Risk','Status'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
