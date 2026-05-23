@@ -1,4 +1,4 @@
-// BSL Inventory v3.2 - stock-singles-mapping-fix
+// BSL Inventory v3.3 - supabase-auth-login
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -85,7 +85,55 @@ const S={
 
 const Badge=({status,t})=>{const m={ok:['#D4EDDA','#155724'],low:['#FFF3CD','#856404'],crit:['#F8D7DA','#721C24']};const[bg,c]=m[status]||m.ok;return<span style={{background:bg,color:c,padding:'2px 8px',borderRadius:99,fontSize:11,fontWeight:500}}>{t[status]||status}</span>};
 
+function LoginScreen(){
+  const[email,setEmail]=useState('');
+  const[password,setPassword]=useState('');
+  const[error,setError]=useState('');
+  const[loading,setLoading]=useState(false);
+  async function handleLogin(e){
+    e.preventDefault();setLoading(true);setError('');
+    const{error}=await supabase.auth.signInWithPassword({email,password});
+    if(error)setError(error.message);
+    setLoading(false);
+  }
+  return(
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'#f0f0f0',fontFamily:'system-ui,sans-serif'}}>
+      <div style={{background:'#fff',borderRadius:16,padding:'2.5rem',width:380,boxShadow:'0 4px 24px rgba(0,0,0,.1)'}}>
+        <div style={{textAlign:'center',marginBottom:'2rem'}}>
+          <div style={{fontSize:24,fontWeight:700,marginBottom:4}}>BSL Inventory</div>
+          <div style={{fontSize:13,color:'#888'}}>Sign in to continue</div>
+        </div>
+        <form onSubmit={handleLogin} style={{display:'flex',flexDirection:'column',gap:12}}>
+          <div style={{display:'flex',flexDirection:'column',gap:4}}>
+            <label style={{fontSize:12,color:'#888',fontWeight:500}}>Email</label>
+            <input style={{fontSize:13,padding:'9px 12px',borderRadius:8,border:'1px solid #ddd'}} type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} required/>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:4}}>
+            <label style={{fontSize:12,color:'#888',fontWeight:500}}>Password</label>
+            <input style={{fontSize:13,padding:'9px 12px',borderRadius:8,border:'1px solid #ddd'}} type="password" placeholder="••••••••" value={password} onChange={e=>setPassword(e.target.value)} required/>
+          </div>
+          {error&&<div style={{fontSize:12,color:'#dc3545',background:'#F8D7DA',padding:'8px 12px',borderRadius:8}}>{error}</div>}
+          <button type="submit" style={{marginTop:4,padding:'10px',borderRadius:8,border:'none',background:'#111',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer'}} disabled={loading}>{loading?'Signing in...':'Sign in'}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App(){
+  const[session,setSession]=useState(null);
+  const[authChecked,setAuthChecked]=useState(false);
+  useEffect(()=>{
+    supabase.auth.getSession().then(({data:{session}})=>{setSession(session);setAuthChecked(true);});
+    const{data:{subscription}}=supabase.auth.onAuthStateChange((_,session)=>setSession(session));
+    return()=>subscription.unsubscribe();
+  },[]);
+  if(!authChecked)return<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontFamily:'system-ui',color:'#888',fontSize:14}}>Loading...</div>;
+  if(!session)return<LoginScreen/>;
+  return<AppMain session={session}/>;
+}
+
+function AppMain({session}){
   const[lang,setLang]=useState('en');
   const[page,setPage]=useState('dashboard');
   const[tab,setTab]=useState('all');
@@ -371,7 +419,10 @@ export default function App(){
             <button key={k} onClick={()=>setPage(k)} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:12}}>{l}</button>
           ))}
         </div>
-        <button style={{...S.btn,color:'#fff',border:'1px solid rgba(255,255,255,.3)',fontSize:12}} onClick={()=>setLang(l=>l==='en'?'es':'en')}>{lang==='en'?'🇲🇽 Español':'🇺🇸 English'}</button>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button style={{...S.btn,color:'#fff',border:'1px solid rgba(255,255,255,.3)',fontSize:12}} onClick={()=>setLang(l=>l==='en'?'es':'en')}>{lang==='en'?'🇲🇽 Español':'🇺🇸 English'}</button>
+          <button style={{...S.btn,color:'#aaa',border:'1px solid rgba(255,255,255,.15)',fontSize:11}} onClick={()=>supabase.auth.signOut()}>Sign out</button>
+        </div>
       </nav>
 
       <main style={S.main}>
