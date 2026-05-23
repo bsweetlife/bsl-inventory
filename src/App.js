@@ -380,13 +380,73 @@ function AppMain({session}){
   const alerts=prods.filter(p=>gs(p)!=='ok');
   const reorderItems=prods.filter(p=>p.stock<=p.reorder&&p.reorder>0);
 
+  // ── FILTERS ──────────────────────────────────────────────────
+  const[search,setSearch]=useState('');
+  const[filterCat,setFilterCat]=useState('');
+  const[filterStatus,setFilterStatus]=useState('');
+  const[sortBy,setSortBy]=useState('name');
+  const[sortDir,setSortDir]=useState('asc');
+
+  const categories=[...new Set(prods.map(p=>p.category).filter(Boolean))].sort();
+
+  const filteredProds=prods.filter(p=>{
+    const q=search.toLowerCase();
+    const matchQ=!q||p.name.toLowerCase().includes(q)||(p.sku||'').toLowerCase().includes(q)||(p.amz||'').toLowerCase().includes(q)||(p.wmt||'').toLowerCase().includes(q);
+    const matchCat=!filterCat||p.category===filterCat;
+    const matchStatus=!filterStatus||gs(p)===filterStatus;
+    return matchQ&&matchCat&&matchStatus;
+  }).sort((a,b)=>{
+    let av,bv;
+    if(sortBy==='name'){av=a.name||'';bv=b.name||'';}
+    else if(sortBy==='stock'){av=a.stock||0;bv=b.stock||0;}
+    else if(sortBy==='price'){av=a.price||0;bv=b.price||0;}
+    else if(sortBy==='cost'){av=a.cost||0;bv=b.cost||0;}
+    else if(sortBy==='days'){av=gd(a)??9999;bv=gd(b)??9999;}
+    else if(sortBy==='status'){av={ok:0,low:1,crit:2}[gs(a)]||0;bv={ok:0,low:1,crit:2}[gs(b)]||0;}
+    else{av=a.name||'';bv=b.name||'';}
+    if(typeof av==='string') return sortDir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
+    return sortDir==='asc'?av-bv:bv-av;
+  });
+
+  function toggleSort(col){if(sortBy===col)setSortDir(d=>d==='asc'?'desc':'asc');else{setSortBy(col);setSortDir('asc');}}
+  const sortIcon=(col)=>sortBy===col?(sortDir==='asc'?'↑':'↓'):'';
+
+  // ── FILTER BAR ───────────────────────────────────────────────
+  const FilterBar=()=>(
+    <div style={{display:'flex',gap:8,marginBottom:'1rem',flexWrap:'wrap',alignItems:'center'}}>
+      <input style={{...S.inp,flex:1,minWidth:160}} placeholder="Search by name, SKU..." value={search} onChange={e=>setSearch(e.target.value)}/>
+      <select style={{...S.inp,width:'auto'}} value={filterCat} onChange={e=>setFilterCat(e.target.value)}>
+        <option value="">All categories</option>
+        {categories.map(c=><option key={c} value={c}>{c}</option>)}
+      </select>
+      <select style={{...S.inp,width:'auto'}} value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+        <option value="">All statuses</option>
+        <option value="ok">OK</option>
+        <option value="low">Low stock</option>
+        <option value="crit">Critical</option>
+      </select>
+      {(search||filterCat||filterStatus)&&<button style={{...S.btn,color:'#dc3545',borderColor:'#f5c6cb',fontSize:11}} onClick={()=>{setSearch('');setFilterCat('');setFilterStatus('');}}>✕ Clear</button>}
+      <span style={{fontSize:11,color:'#aaa',marginLeft:'auto'}}>{filteredProds.length} of {prods.length} products</span>
+    </div>
+  );
+
   // ── PRODUCT TABLE ────────────────────────────────────────────
   const ProdTable=({list})=>{
     if(!list.length)return<div style={{textAlign:'center',padding:'2rem',color:'#aaa',fontSize:13}}>{tab==='alerts'?t.noAlerts:t.noProducts}</div>;
+    const SortTh=({col,children})=><th style={{...S.th,cursor:'pointer',userSelect:'none'}} onClick={()=>toggleSort(col)}>{children} <span style={{color:'#4a90e2'}}>{sortIcon(col)}</span></th>;
     return(
       <div style={{overflowX:'auto',border:'1px solid #eee',borderRadius:12}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-          <thead><tr>{[t.status,t.product,t.rootSku,t.stock,t.days,t.cost,t.price,t.actions].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+          <thead><tr>
+            <SortTh col="status">{t.status}</SortTh>
+            <SortTh col="name">{t.product}</SortTh>
+            <th style={S.th}>{t.rootSku}</th>
+            <SortTh col="stock">{t.stock}</SortTh>
+            <SortTh col="days">{t.days}</SortTh>
+            <SortTh col="cost">{t.cost}</SortTh>
+            <SortTh col="price">{t.price}</SortTh>
+            <th style={S.th}>{t.actions}</th>
+          </tr></thead>
           <tbody>
             {list.map(p=>{const st=gs(p),dl=gd(p);return(
               <tr key={p.id}>
@@ -457,7 +517,7 @@ function AppMain({session}){
           </div>
 
           <div style={S.card}>
-            {tab==='all'&&<ProdTable list={prods}/>}
+            {tab==='all'&&<><FilterBar/><ProdTable list={filteredProds}/></>}
             {tab==='alerts'&&<ProdTable list={alerts}/>}
             {tab==='channels'&&(
               <div style={{overflowX:'auto'}}>
