@@ -221,7 +221,7 @@ function AppMain({session}){
     const{parsed,mode}=mdata;
     if(mode==='replace'){await supabase.from('products').delete().neq('id',0);await supabase.from('products').insert(parsed);}
     else{for(const p of parsed){const existing=prods.find(x=>x.sku&&x.sku===p.sku);if(existing)await supabase.from('products').update(p).eq('id',existing.id);else await supabase.from('products').insert(p);}}
-    await supabase.from('change_log').insert({description:`Bulk import: ${parsed.length} products (${mode||'add',user_email:userEmail})`,qty_change:parsed.length});
+    await supabase.from('change_log').insert({description:`Bulk import: ${parsed.length} products (${mode||'add'})`,qty_change:parsed.length,user_email:userEmail});
     await loadAll();setModal(null);
   }
 
@@ -386,7 +386,7 @@ function AppMain({session}){
       if(!prod)return{success:false,error:`Product ID ${product_id} not found`};
       const old_stock=prod.stock;
       await supabase.from('products').update({stock:new_stock}).eq('id',product_id);
-      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${old_stock}→${new_stock} (${reason,user_email:userEmail})`,qty_change:new_stock-old_stock});
+      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${old_stock}→${new_stock} (${reason})`,qty_change:new_stock-old_stock,user_email:userEmail});
       await loadAll();
       return{success:true,message:`Updated ${product_name}: ${old_stock} → ${new_stock} singles (${reason})`};
     }
