@@ -265,6 +265,41 @@ function AppMain({session}){
     setMdata(prev=>({...prev,preview,warnings,step:3}));
   }
 
+  // ── AUTO VELOCITY CALCULATION ───────────────────────────────
+  async function recalculateVelocity(productIds=null){
+    // Get all orders from last 30 days
+    const thirtyDaysAgo=new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate()-30);
+    
+    let query=supabase.from('orders_log')
+      .select('product_id,qty_sold,created_at')
+      .gte('created_at',thirtyDaysAgo.toISOString());
+    
+    if(productIds&&productIds.length>0){
+      query=query.in('product_id',productIds);
+    }
+    
+    const{data:orders,error}=await query;
+    if(error||!orders||orders.length===0)return;
+
+    // Aggregate sales per product
+    const salesByProduct={};
+    orders.forEach(o=>{
+      if(!salesByProduct[o.product_id])salesByProduct[o.product_id]=0;
+      salesByProduct[o.product_id]+=parseFloat(o.qty_sold)||0;
+    });
+
+    // Calculate days since first order (up to 30)
+    const firstOrderDate=new Date(Math.min(...orders.map(o=>new Date(o.created_at))));
+    const daysSinceFirst=Math.max(1,Math.min(30,Math.round((new Date()-firstOrderDate)/(1000*60*60*24))));
+
+    // Update velocity for each product (monthly = sales/days * 30)
+    for(const[productId,totalSold] of Object.entries(salesByProduct)){
+      const monthlyVelocity=Math.round((totalSold/daysSinceFirst)*30*10)/10;
+      await supabase.from('products').update({velocity:monthlyVelocity}).eq('id',parseInt(productId));
+    }
+  }
+
   async function applyOrders(){
     const platLabel=PLAT[mdata.platform]?.l;
     for(const item of mdata.preview){
@@ -276,6 +311,9 @@ function AppMain({session}){
     }
     await supabase.from('change_log').insert({description:`${platLabel} upload complete`,user_email:userEmail});
     if(mdata.hash)await supabase.from('uploaded_files').insert({file_hash:mdata.hash});
+    // Recalculate velocity for affected products
+    const affectedIds=mdata.preview.filter(i=>i.prod).map(i=>i.prod.id);
+    await recalculateVelocity(affectedIds);
     await loadAll();setModal(null);
   }
 
@@ -328,6 +366,9 @@ function AppMain({session}){
         await supabase.from('change_log').insert({description:`Received from ${parsed.supplier}: ${prod.name} +${item.singles} singles`,qty_change:item.singles,platform:'inbound',user_email:userEmail});
       }
     }
+    // Recalculate velocity for affected products
+    const packingIds=(parsed.items||[]).filter(i=>i.matchedSku).map(i=>prods.find(p=>p.sku===i.matchedSku)?.id).filter(Boolean);
+    if(packingIds.length)await recalculateVelocity(packingIds);
     await loadAll();setModal(null);
   }
 
@@ -726,7 +767,10 @@ function AppMain({session}){
             </div>
             {/* Velocity report */}
             <div style={S.card}>
-              <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>📈 {t.velocityReport}</div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
+              <div style={{fontSize:15,fontWeight:600}}>📈 {t.velocityReport}</div>
+              <button style={{...S.btn,fontSize:11,color:'#4a90e2',borderColor:'#4a90e2'}} onClick={async()=>{await recalculateVelocity();await loadAll();alert('Velocity recalculated from last 30 days of orders!');}}>🔄 Recalculate</button>
+            </div>
               <div style={{overflowX:'auto',border:'1px solid #eee',borderRadius:12}}>
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                   <thead><tr>{['Product','Monthly Sales','Daily Rate','Days of Supply','Value at Risk','Status'].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
