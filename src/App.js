@@ -346,6 +346,61 @@ function AppMain({session}){
   }
 
   // ── AI CHAT ─────────────────────────────────────────────────
+  // ── INVENTORY TOOLS ─────────────────────────────────────────
+  const inventoryTools=[
+    {
+      name:'update_stock',
+      description:'Update the stock level of a product. Use this when the user asks to add, remove, set, or adjust stock for any product.',
+      input_schema:{
+        type:'object',
+        properties:{
+          product_id:{type:'number',description:'The numeric ID of the product'},
+          product_name:{type:'string',description:'Name of the product for confirmation'},
+          new_stock:{type:'number',description:'The new stock level in singles after the update'},
+          reason:{type:'string',description:'Brief reason for the update e.g. "manual adjustment", "received shipment", "direct sale"'}
+        },
+        required:['product_id','product_name','new_stock','reason']
+      }
+    },
+    {
+      name:'update_product_field',
+      description:'Update a specific field of a product like price, cost, velocity, reorder point, or supplier.',
+      input_schema:{
+        type:'object',
+        properties:{
+          product_id:{type:'number',description:'The numeric ID of the product'},
+          product_name:{type:'string',description:'Name of the product'},
+          field:{type:'string',enum:['price','cost','velocity','reorder','supplier','category'],description:'Which field to update'},
+          value:{type:'string',description:'New value for the field'}
+        },
+        required:['product_id','product_name','field','value']
+      }
+    }
+  ];
+
+  async function executeToolCall(toolName, toolInput){
+    if(toolName==='update_stock'){
+      const{product_id,product_name,new_stock,reason}=toolInput;
+      const prod=prods.find(p=>p.id===product_id);
+      if(!prod)return{success:false,error:`Product ID ${product_id} not found`};
+      const old_stock=prod.stock;
+      await supabase.from('products').update({stock:new_stock}).eq('id',product_id);
+      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${old_stock}→${new_stock} (${reason})`,qty_change:new_stock-old_stock});
+      await loadAll();
+      return{success:true,message:`Updated ${product_name}: ${old_stock} → ${new_stock} singles (${reason})`};
+    }
+    if(toolName==='update_product_field'){
+      const{product_id,product_name,field,value}=toolInput;
+      const update={};
+      update[field]=isNaN(value)?value:parseFloat(value);
+      await supabase.from('products').update(update).eq('id',product_id);
+      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${field} set to ${value}`});
+      await loadAll();
+      return{success:true,message:`Updated ${product_name}: ${field} = ${value}`};
+    }
+    return{success:false,error:'Unknown tool'};
+  }
+
   async function sendChat(e){
     e.preventDefault();
     if(!chatInput.trim()||chatLoading)return;
@@ -356,20 +411,57 @@ function AppMain({session}){
     setChatLoading(true);
     try{
       const notesContext=agentNotes.length?`\nPermanent notes & instructions:\n${agentNotes.map(n=>`[${n.category}] ${n.title}: ${n.content}`).join('\n')}`:'';
-      const inventoryContext=`Current inventory (${prods.length} products, all quantities in SINGLES):\n${prods.map(p=>`- ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} singles | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Days left: ${gd(p)??'N/A'} | Supplier: ${p.supplier||'—'} | AMZ: ${p.amz||'—'} (${p.amz_pack_size||1}/pack) | WMT: ${p.wmt||'—'} (${p.wmt_pack_size||1}/pack) | TGT: ${p.tgt||'—'} | Temu: ${p.temu||'—'}`).join('\n')}`;
-      const recentLog=`\nRecent changes:\n${logEntries.slice(0,15).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
-      const customerContext=customers.length?`\nRecent customer sales (${customers.length} total):\n${customers.slice(0,5).map(c=>`- ${c.customer_name} | ${new Date(c.created_at).toLocaleDateString()} | ${c.total_singles} singles | ${c.platform}`).join('\n')}`:'';
+      const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
+      const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to add/remove/set stock, USE the update_stock tool — don't just say you did it. 3) Always confirm what you did after using a tool. 4) Be concise. Respond in ${lang==='es'?'Spanish':'English'}.${notesContext}\n\n${inventoryContext}${recentLog}`;
+
+      // First API call with tools
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:1000,
-        system:`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp), a multi-channel e-commerce business. CRITICAL RULES: 1) All inventory is tracked in SINGLES. 2) Pack sizes vary by platform — always multiply packs × pack size to get singles. 3) When suggesting reorders, consider velocity and days of supply. 4) Products come from different suppliers — EVI Labs handles lactose free milk products. 5) Direct sales go through packing lists (like EVI Labs). 6) Marketplace sales go through Amazon FBA and Walmart WFS. Respond in ${lang==='es'?'Spanish':'English'}.${notesContext}\n\n${inventoryContext}${recentLog}${customerContext}`,
+        system:systemPrompt,
+        tools:inventoryTools,
         messages:newMsgs.filter(m=>m.role!=='system').map(m=>({role:m.role,content:m.content})),
       })});
       const data=await res.json();
-      const reply=data.content?.[0]?.text||'Sorry, I could not process that.';
-      setChatMsgs(prev=>[...prev,{role:'assistant',content:reply}]);
-    }catch(err){setChatMsgs(prev=>[...prev,{role:'assistant',content:'Error connecting to Claude API.'}]);}
+
+      // Check if Claude wants to use a tool
+      const toolUseBlock=data.content?.find(b=>b.type==='tool_use');
+      const textBlock=data.content?.find(b=>b.type==='text');
+
+      if(toolUseBlock){
+        // Show thinking message
+        setChatMsgs(prev=>[...prev,{role:'assistant',content:`🔧 Updating inventory...`}]);
+        
+        // Execute the tool
+        const toolResult=await executeToolCall(toolUseBlock.name, toolUseBlock.input);
+        
+        // Second API call with tool result so Claude can respond
+        const msgs2=[
+          ...newMsgs.filter(m=>m.role!=='system').map(m=>({role:m.role,content:m.content})),
+          {role:'assistant',content:data.content},
+          {role:'user',content:[{type:'tool_result',tool_use_id:toolUseBlock.id,content:JSON.stringify(toolResult)}]}
+        ];
+        const res2=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          model:'claude-sonnet-4-20250514',
+          max_tokens:500,
+          system:systemPrompt,
+          tools:inventoryTools,
+          messages:msgs2,
+        })});
+        const data2=await res2.json();
+        const finalReply=data2.content?.find(b=>b.type==='text')?.text||'Done!';
+        // Replace thinking message with final reply
+        setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:finalReply}]);
+      } else {
+        const reply=textBlock?.text||'Sorry, I could not process that.';
+        setChatMsgs(prev=>[...prev,{role:'assistant',content:reply}]);
+      }
+    }catch(err){
+      console.error(err);
+      setChatMsgs(prev=>[...prev,{role:'assistant',content:'Error connecting to Claude API.'}]);
+    }
     setChatLoading(false);
   }
 
