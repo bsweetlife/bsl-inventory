@@ -1,4 +1,4 @@
-// BSL Inventory v4.10 - visible-column-dividers
+// BSL Inventory v4.11 - chat-file-upload
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -151,7 +151,9 @@ function AppMain({session}){
   const[chatMsgs,setChatMsgs]=useState([]);
   const[chatInput,setChatInput]=useState('');
   const[chatLoading,setChatLoading]=useState(false);
+  const[chatFile,setChatFile]=useState(null);
   const chatEndRef=useRef(null);
+  const chatFileRef=useRef(null);
   const t=T[lang];
 
   useEffect(()=>{loadAll();},[]);
@@ -456,10 +458,30 @@ function AppMain({session}){
 
   async function sendChat(e){
     e.preventDefault();
-    if(!chatInput.trim()||chatLoading)return;
+    if((!chatInput.trim()&&!chatFile)||chatLoading)return;
     const userMsg=chatInput.trim();
+    const fileToSend=chatFile;
     setChatInput('');
-    const newMsgs=[...chatMsgs,{role:'user',content:userMsg}];
+    setChatFile(null);
+    if(chatFileRef.current)chatFileRef.current.value='';
+
+    // Build user message content — text + optional file
+    let userContent=userMsg;
+    let filePreview=null;
+    if(fileToSend){
+      const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(fileToSend);});
+      const isPDF=fileToSend.type==='application/pdf';
+      const isImage=fileToSend.type.startsWith('image/');
+      filePreview={name:fileToSend.name,type:fileToSend.type,base64};
+      userContent=[
+        ...(isPDF?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}}]:[]),
+        ...(isImage?[{type:'image',source:{type:'base64',media_type:fileToSend.type,data:base64}}]:[]),
+        {type:'text',text:userMsg||`Please analyze this file: ${fileToSend.name}`}
+      ];
+    }
+
+    const displayMsg={role:'user',content:userMsg||(fileToSend?`📎 ${fileToSend.name}`:'')};
+    const newMsgs=[...chatMsgs,displayMsg];
     setChatMsgs(newMsgs);
     setChatLoading(true);
     try{
@@ -469,13 +491,19 @@ function AppMain({session}){
 
       const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to add/remove/set stock, USE the update_stock tool — don't just say you did it. 3) Always confirm what you did after using a tool. 4) Be concise. Respond in ${lang==='es'?'Spanish':'English'}.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
+      // Build messages array — replace last user message content with rich content if file attached
+      const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
+        if(i===newMsgs.length-1&&filePreview)return{role:'user',content:userContent};
+        return{role:m.role,content:m.content};
+      });
+
       // First API call with tools
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:1000,
         system:systemPrompt,
         tools:inventoryTools,
-        messages:newMsgs.filter(m=>m.role!=='system').map(m=>({role:m.role,content:m.content})),
+        messages:apiMsgs,
       })});
       const data=await res.json();
 
@@ -771,10 +799,21 @@ function AppMain({session}){
               {chatLoading&&<div style={{display:'flex',justifyContent:'flex-start'}}><div style={{padding:'10px 14px',borderRadius:12,background:'#f0f0f0',fontSize:13,color:'#888'}}>{t.thinking}</div></div>}
               <div ref={chatEndRef}/>
             </div>
-            <form onSubmit={sendChat} style={{display:'flex',gap:8,paddingTop:'0.75rem',borderTop:'1px solid #eee'}}>
-              <input style={{...S.inp,flex:1}} value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder={t.chatPlaceholder} disabled={chatLoading}/>
-              <button type="submit" style={{...S.btnP,padding:'8px 16px'}} disabled={chatLoading||!chatInput.trim()}>→</button>
-            </form>
+            <div style={{borderTop:'1px solid #eee',paddingTop:'0.75rem'}}>
+              {chatFile&&(
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,background:'#f0f7ff',borderRadius:8,padding:'6px 10px'}}>
+                  <span style={{fontSize:16}}>{chatFile.type.startsWith('image/')?'🖼️':chatFile.type==='application/pdf'?'📄':'📎'}</span>
+                  <span style={{fontSize:12,color:'#1565c0',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{chatFile.name}</span>
+                  <button style={{...S.btn,padding:'2px 7px',fontSize:11,color:'#dc3545',borderColor:'#f5c6cb'}} onClick={()=>{setChatFile(null);if(chatFileRef.current)chatFileRef.current.value='';}}>✕</button>
+                </div>
+              )}
+              <form onSubmit={sendChat} style={{display:'flex',gap:8}}>
+                <input ref={chatFileRef} type="file" accept="image/*,.pdf,.csv,.xlsx,.xls" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)setChatFile(f);}}/>
+                <button type="button" style={{...S.btn,padding:'8px 10px',fontSize:16,flexShrink:0,color:chatFile?'#1565c0':'#888',borderColor:chatFile?'#1565c0':'#ddd'}} onClick={()=>chatFileRef.current.click()} disabled={chatLoading} title="Attach file">📎</button>
+                <input style={{...S.inp,flex:1}} value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder={chatFile?'Add a message (optional)...':t.chatPlaceholder} disabled={chatLoading}/>
+                <button type="submit" style={{...S.btnP,padding:'8px 16px'}} disabled={chatLoading||(!chatInput.trim()&&!chatFile)}>→</button>
+              </form>
+            </div>
           </div>
         )}
 
