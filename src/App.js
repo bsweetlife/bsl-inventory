@@ -858,7 +858,7 @@ function AppMain({session}){
       </main>
 
       {/* MODALS */}
-      {modal==='product'&&<ProductModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={saveProduct} onClose={()=>setModal(null)}/>}
+      {modal==='product'&&<ProductModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={saveProduct} onClose={()=>setModal(null)} lang={lang}/>}
       {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
       {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
       {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)} prods={prods}/>}
@@ -869,8 +869,8 @@ function AppMain({session}){
 }
 
 // ── PRODUCT MODAL ─────────────────────────────────────────────
-function ProductModal({t,S,mdata,setMdata,onSave,onClose}){
-  const[form,setForm]=useState(mdata.form||{id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1});
+function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
+  const[form,setForm]=useState({...{id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:''},...(mdata.form||{})});
   const isEdit=!!form.id;
   return(
     <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
