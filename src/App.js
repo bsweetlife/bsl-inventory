@@ -143,6 +143,8 @@ function AppMain({session}){
   const[hashes,setHashes]=useState([]);
   const[customers,setCustomers]=useState([]);
   const[agentNotes,setAgentNotes]=useState([]);
+  const[globalSettings,setGlobalSettings]=useState({raw_material_waste_pct:0.005,packaging_waste_pct:0.005,filling_cost:1.15});
+  const[costModal,setCostModal]=useState(null);
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null);
   const[mdata,setMdata]=useState({});
@@ -159,25 +161,34 @@ function AppMain({session}){
   async function loadAll(){
     setLoading(true);
     try{
-      const[{data:p},{data:l},{data:h},{data:c},{data:n}]=await Promise.all([
+      const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs}]=await Promise.all([
         supabase.from('products').select('*').order('name'),
         supabase.from('change_log').select('*').order('created_at',{ascending:false}).limit(200),
         supabase.from('uploaded_files').select('file_hash'),
         supabase.from('customer_sales').select('*,customer_sale_items(*)').order('created_at',{ascending:false}).limit(100),
         supabase.from('agent_notes').select('*').order('created_at',{ascending:false}),
+        supabase.from('global_settings').select('*'),
       ]);
       if(p)setProds(p);
       if(l)setLog(l);
       if(h)setHashes(h.map(x=>x.file_hash));
       if(c)setCustomers(c);
       if(n)setAgentNotes(n);
+      if(gs){const s={};gs.forEach(g=>s[g.key]=parseFloat(g.value));setGlobalSettings(prev=>({...prev,...s}));}
     }catch(e){console.error(e);}
     setLoading(false);
     setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
   }
 
+  async function saveGlobalSettings(gs){
+    for(const[key,value] of Object.entries(gs)){
+      await supabase.from('global_settings').update({value,updated_at:new Date().toISOString()}).eq('key',key);
+    }
+    setGlobalSettings(gs);
+  }
+
   async function saveProduct(form){
-    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1};
+    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1,weight_oz:parseFloat(form.weight_oz)||0,raw_material_cost_per_oz:parseFloat(form.raw_material_cost_per_oz)||0,packaging_cost:parseFloat(form.packaging_cost)||0,box_cost:parseFloat(form.box_cost)||0,product_type:form.product_type||'finished'};
     delete entry.id;
     if(form.id){
       const old=prods.find(p=>p.id===form.id);
@@ -514,6 +525,25 @@ function AppMain({session}){
   const alerts=prods.filter(p=>gs(p)!=='ok');
   const reorderItems=prods.filter(p=>p.stock<=p.reorder&&p.reorder>0);
 
+  // ── COST CALCULATOR ──────────────────────────────────────────
+  function calcCost(p,gs){
+    if(p.product_type!=='packaged')return{total:parseFloat(p.cost)||0,breakdown:null};
+    const rmWaste=gs.raw_material_waste_pct||0.005;
+    const pkgWaste=gs.packaging_waste_pct||0.005;
+    const filling=gs.filling_cost||1.15;
+    const rawMaterial=(p.raw_material_cost_per_oz||0)*(p.weight_oz||0);
+    const rawWithWaste=rawMaterial*(1+rmWaste);
+    const pkgWithWaste=(p.packaging_cost||0)*(1+pkgWaste);
+    const box=p.box_cost||0;
+    const total=rawWithWaste+pkgWithWaste+filling+box;
+    return{
+      total:Math.round(total*10000)/10000,
+      rawMaterial,rawWithWaste,
+      pkgWithWaste,filling,box,
+      rmWaste,pkgWaste
+    };
+  }
+
   // ── FILTERS ──────────────────────────────────────────────────
   const[search,setSearch]=useState('');
   const[filterCat,setFilterCat]=useState('');
@@ -589,7 +619,7 @@ function AppMain({session}){
                 <td style={S.td}><code style={{fontSize:10,background:'#f5f5f5',padding:'1px 5px',borderRadius:4}}>{p.sku||'—'}</code></td>
                 <td style={{...S.td,color:p.stock<0?'#dc3545':undefined}}>{p.stock}</td>
                 <td style={{...S.td,color:st==='crit'?'#dc3545':st==='low'?'#856404':undefined}}>{dl!=null?`${dl}d`:'—'}</td>
-                <td style={S.td}>{fm(p.cost)}</td>
+                <td style={{...S.td,cursor:p.product_type==='packaged'?'pointer':'default',color:p.product_type==='packaged'?'#4a90e2':undefined,textDecoration:p.product_type==='packaged'?'underline':undefined}} onClick={()=>{if(p.product_type==='packaged')setCostModal(p)}}>{fm(p.product_type==='packaged'?calcCost(p,globalSettings).total:p.cost)}{p.product_type==='packaged'&&<span style={{fontSize:9,marginLeft:3}}>📊</span>}</td>
                 <td style={S.td}>{fm(p.price)}</td>
                 <td style={{...S.td,whiteSpace:'nowrap'}}>
                   <button style={{...S.btn,padding:'3px 7px'}} onClick={()=>{setMdata({form:{...p}});setModal('product')}}>✏️</button>
@@ -832,6 +862,7 @@ function AppMain({session}){
       {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
       {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
       {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)} prods={prods}/>}
+      {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
     </div>
   );
@@ -846,7 +877,22 @@ function ProductModal({t,S,mdata,setMdata,onSave,onClose}){
       <div style={S.sheet}>
         <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>{isEdit?t.edit:t.addProduct}</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-          {[{l:t.productName,k:'name',full:true,ph:'Lactose Free 1.5lb'},{l:'Root SKU',k:'sku',ph:'BSL-LACT-150'},{l:t.category,k:'category',ph:'Lactose Free'},{l:`${t.stock}`,k:'stock',t:'number',ph:'0'},{l:t.monthlyS,k:'velocity',t:'number',ph:'0'},{l:`${t.cost} ($)`,k:'cost',t:'number',ph:'0.00'},{l:`${t.price} ($)`,k:'price',t:'number',ph:'0.00'},{l:t.reorder,k:'reorder',t:'number',ph:'0'},{l:t.supplier,k:'supplier',full:true,ph:'EVI Labs'}].map(f=>(
+          <div style={{gridColumn:'1/-1',display:'flex',gap:8,marginBottom:4,alignItems:'center'}}>
+          <label style={{fontSize:11,color:'#888',fontWeight:500}}>Product Type:</label>
+          {['finished','packaged'].map(pt=>(
+            <label key={pt} style={{display:'flex',alignItems:'center',gap:4,fontSize:12,cursor:'pointer'}}>
+              <input type="radio" name="product_type" value={pt} checked={(form.product_type||'finished')===pt} onChange={()=>setForm(prev=>({...prev,product_type:pt}))}/>
+              {pt==='finished'?(lang==='es'?'Terminado (comprado)':'Finished (bought)'):(lang==='es'?'Empacado (nosotros)':'Packaged (we package)')}
+            </label>
+          ))}
+        </div>
+      {[{l:t.productName,k:'name',full:true,ph:'Lactose Free 1.5lb'},{l:'Root SKU',k:'sku',ph:'BSL-LACT-150'},{l:t.category,k:'category',ph:'Lactose Free'},{l:`${t.stock}`,k:'stock',t:'number',ph:'0'},{l:t.monthlyS,k:'velocity',t:'number',ph:'0'},{l:`${t.price} ($)`,k:'price',t:'number',ph:'0.00'},{l:t.reorder,k:'reorder',t:'number',ph:'0'},
+                ...(( form.product_type||'finished')==='packaged'?[
+                  {l:lang==='es'?'Peso (oz)':'Weight (oz)',k:'weight_oz',t:'number',ph:'12.6'},
+                  {l:lang==='es'?'Costo materia prima/oz':'Raw material cost/oz ($)',k:'raw_material_cost_per_oz',t:'number',ph:'1.51'},
+                  {l:lang==='es'?'Costo empaque':'Packaging cost ($)',k:'packaging_cost',t:'number',ph:'0.50'},
+                  {l:lang==='es'?'Costo caja':'Box cost ($)',k:'box_cost',t:'number',ph:'0.05'},
+                ]:[{l:t.cost+' ($)',k:'cost',t:'number',ph:'0.00'}]),{l:t.supplier,k:'supplier',full:true,ph:'EVI Labs'}].map(f=>(
             <div key={f.k} style={{gridColumn:f.full?'1/-1':undefined,display:'flex',flexDirection:'column',gap:3}}>
               <label style={{fontSize:11,color:'#888',fontWeight:500}}>{f.l}</label>
               <input style={S.inp} type={f.t||'text'} placeholder={f.ph} value={form[f.k]||''} onChange={e=>setForm(prev=>({...prev,[f.k]:e.target.value}))}/>
@@ -1024,6 +1070,7 @@ function PackingModal({t,S,mdata,setMdata,onFile,onApply,onClose,prods}){
     if(field==='matchedSku'){
       const prod=prods.find(p=>p.sku===value);
       items[i].matchedName=prod?.name||value;
+      if(prod) items[i].description=prod.name;
     }
     setMdata(prev=>({...prev,parsed:{...prev.parsed,items,totalSingles:items.filter(x=>x.included!==false).reduce((a,x)=>a+(parseFloat(x.singles)||0),0)}}));
   }
@@ -1145,6 +1192,122 @@ function PackingModal({t,S,mdata,setMdata,onFile,onApply,onClose,prods}){
             </div>
           </div>
         </>}
+      </div>
+    </div>
+  );
+}
+
+// ── COST BREAKDOWN MODAL ─────────────────────────────────────
+function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings}){
+  const[gs,setGs]=useState({...globalSettings});
+  const[editingGs,setEditingGs]=useState(false);
+  const isES=lang==='es';
+
+  function calc(p,g){
+    const rmWaste=g.raw_material_waste_pct||0.005;
+    const pkgWaste=g.packaging_waste_pct||0.005;
+    const filling=g.filling_cost||1.15;
+    const rawMaterial=(p.raw_material_cost_per_oz||0)*(p.weight_oz||0);
+    const rawWithWaste=rawMaterial*(1+rmWaste);
+    const pkgWithWaste=(p.packaging_cost||0)*(1+pkgWaste);
+    const box=p.box_cost||0;
+    const total=rawWithWaste+pkgWithWaste+filling+box;
+    return{rawMaterial,rawWithWaste,pkgCost:p.packaging_cost||0,pkgWithWaste,filling,box,total};
+  }
+
+  const c=calc(prod,gs);
+  const fm2=n=>'$'+parseFloat(n||0).toFixed(4);
+  const fm4=n=>'$'+parseFloat(n||0).toFixed(4);
+  const pct=n=>((n||0)*100).toFixed(2)+'%';
+
+  const row=(label,value,sub,highlight)=>(
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'6px 0',borderBottom:'0.5px solid #f0f0f0',background:highlight?'#f8f9ff':'transparent',paddingLeft:highlight?0:0}}>
+      <span style={{fontSize:12,color:highlight?'#111':'#555',fontWeight:highlight?600:400}}>{label}</span>
+      <div style={{textAlign:'right'}}>
+        <span style={{fontSize:12,fontWeight:highlight?700:500,color:highlight?'#111':'#333'}}>{value}</span>
+        {sub&&<span style={{fontSize:10,color:'#aaa',marginLeft:4}}>{sub}</span>}
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,.45)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#fff',borderRadius:16,padding:'1.5rem',width:480,maxWidth:'95vw',maxHeight:'90vh',overflowY:'auto'}}>
+        
+        {/* Header */}
+        <div style={{marginBottom:'1.25rem'}}>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:2}}>{prod.name}</div>
+          <div style={{fontSize:11,color:'#888'}}>{isES?'Desglose de Costos':'Cost Breakdown'} — {prod.sku}</div>
+        </div>
+
+        {/* Product specs */}
+        <div style={{background:'#f8f8f8',borderRadius:8,padding:'10px 12px',marginBottom:'1rem',display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+          <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Peso':'Weight'}</div><div style={{fontSize:13,fontWeight:600}}>{prod.weight_oz||0} oz</div></div>
+          <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Precio venta':'Selling price'}</div><div style={{fontSize:13,fontWeight:600}}>${prod.price||0}</div></div>
+          <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Costo materia prima/oz':'Raw material/oz'}</div><div style={{fontSize:13,fontWeight:600}}>${prod.raw_material_cost_per_oz||0}</div></div>
+          <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Costo empaque':'Packaging'}</div><div style={{fontSize:13,fontWeight:600}}>${prod.packaging_cost||0}</div></div>
+        </div>
+
+        {/* Cost breakdown table */}
+        <div style={{marginBottom:'1rem'}}>
+          <div style={{fontSize:11,fontWeight:600,color:'#888',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:6}}>{isES?'Materia Prima':'Raw Material'}</div>
+          {row(isES?'Costo materia prima':'Raw material cost', fm2((prod.raw_material_cost_per_oz||0)*(prod.weight_oz||0)), `${prod.raw_material_cost_per_oz||0}/oz × ${prod.weight_oz||0}oz`)}
+          {row(isES?`Merma (${pct(gs.raw_material_waste_pct)})`:`Waste (${pct(gs.raw_material_waste_pct)})`, fm2(c.rawWithWaste-c.rawMaterial))}
+          {row(isES?'Costo MP + Merma':'Raw Material + Waste', fm2(c.rawWithWaste), null, true)}
+        </div>
+
+        <div style={{marginBottom:'1rem'}}>
+          <div style={{fontSize:11,fontWeight:600,color:'#888',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:6}}>{isES?'Material de Empaque':'Packaging Material'}</div>
+          {row(isES?'Costo empaque':'Packaging cost', fm2(prod.packaging_cost||0))}
+          {row(isES?`Merma empaque (${pct(gs.packaging_waste_pct)})`:`Packaging waste (${pct(gs.packaging_waste_pct)})`, fm2(c.pkgWithWaste-c.pkgCost))}
+          {row(isES?'Empaque + Merma':'Packaging + Waste', fm2(c.pkgWithWaste))}
+          {row(isES?'Envasado/Sellado':'Filling/Sealing', fm2(c.filling))}
+          {row(isES?'Caja':'Box cost', fm2(c.box))}
+          {row(isES?'Total Empaque':'Total Packaging', fm2(c.pkgWithWaste+c.filling+c.box), null, true)}
+        </div>
+
+        <div style={{background:'#111',borderRadius:10,padding:'12px 14px',marginBottom:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{color:'#fff',fontSize:14,fontWeight:600}}>{isES?'Costo Producto Terminado':'Total Product Cost'}</span>
+          <span style={{color:'#fff',fontSize:20,fontWeight:700}}>${c.total.toFixed(4)}</span>
+        </div>
+
+        {prod.price>0&&(
+          <div style={{background:'#D4EDDA',borderRadius:8,padding:'10px 12px',marginBottom:'1rem',display:'flex',justifyContent:'space-between'}}>
+            <span style={{fontSize:12,color:'#155724',fontWeight:500}}>{isES?'Margen bruto':'Gross margin'}</span>
+            <span style={{fontSize:13,color:'#155724',fontWeight:700}}>${(prod.price-c.total).toFixed(4)} ({(((prod.price-c.total)/prod.price)*100).toFixed(1)}%)</span>
+          </div>
+        )}
+
+        {/* Global settings toggle */}
+        <div style={{borderTop:'1px solid #eee',paddingTop:'1rem',marginBottom:'1rem'}}>
+          <button style={{...S.btn,fontSize:11,color:'#4a90e2',borderColor:'#4a90e2'}} onClick={()=>setEditingGs(!editingGs)}>
+            ⚙️ {isES?'Editar configuración global':'Edit global settings'}
+          </button>
+          {editingGs&&(
+            <div style={{marginTop:'1rem',display:'flex',flexDirection:'column',gap:8}}>
+              <div style={{fontSize:11,color:'#888',marginBottom:4}}>{isES?'Estos valores aplican a todos los productos':'These values apply to all packaged products'}</div>
+              {[
+                {k:'raw_material_waste_pct',l:isES?'Merma materia prima %':'Raw material waste %',mult:100},
+                {k:'packaging_waste_pct',l:isES?'Merma empaque %':'Packaging waste %',mult:100},
+                {k:'filling_cost',l:isES?'Costo envasado ($)':'Filling/sealing cost ($)',mult:1},
+              ].map(f=>(
+                <div key={f.k} style={{display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
+                  <label style={{fontSize:12,color:'#555'}}>{f.l}</label>
+                  <input style={{...S.inp,width:80,textAlign:'right'}} type="number" step="0.01"
+                    value={f.mult>1?(gs[f.k]*f.mult).toFixed(2):gs[f.k]}
+                    onChange={e=>setGs(prev=>({...prev,[f.k]:parseFloat(e.target.value)/(f.mult)||0}))}/>
+                </div>
+              ))}
+              <button style={{...S.btn,background:'#111',color:'#fff',border:'none',alignSelf:'flex-end'}} onClick={()=>{onSaveSettings(gs);setEditingGs(false);}}>
+                {isES?'Guardar configuración':'Save settings'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div style={{display:'flex',justifyContent:'flex-end'}}>
+          <button style={{...S.btn,background:'#111',color:'#fff',border:'none'}} onClick={onClose}>{isES?'Cerrar':'Close'}</button>
+        </div>
       </div>
     </div>
   );
