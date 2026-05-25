@@ -1,4 +1,4 @@
-// BSL Inventory v4.12 - inventory-locations
+// BSL Inventory v4.13 - clear-all-stock-with-password
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -154,6 +154,9 @@ function AppMain({session}){
   const[chatInput,setChatInput]=useState('');
   const[chatLoading,setChatLoading]=useState(false);
   const[chatFile,setChatFile]=useState(null);
+  const[pendingDangerousTool,setPendingDangerousTool]=useState(null);
+  const[passwordInput,setPasswordInput]=useState('');
+  const[passwordError,setPasswordError]=useState('');
   const chatEndRef=useRef(null);
   const chatFileRef=useRef(null);
   const t=T[lang];
@@ -434,6 +437,17 @@ function AppMain({session}){
         },
         required:['product_id','product_name','field','value']
       }
+    },
+    {
+      name:'clear_all_stock',
+      description:'Set ALL products stock to 0. ONLY use this when the user explicitly asks to clear, reset, or zero out all inventory stock. This is a destructive action that requires a password confirmation from the user.',
+      input_schema:{
+        type:'object',
+        properties:{
+          reason:{type:'string',description:'Reason for clearing all stock'}
+        },
+        required:['reason']
+      }
     }
   ];
 
@@ -457,7 +471,56 @@ function AppMain({session}){
       await loadAll();
       return{success:true,message:`Updated ${product_name}: ${field} = ${value}`};
     }
+    if(toolName==='clear_all_stock'){
+      // This is handled via password prompt — should not reach here directly
+      return{success:false,error:'clear_all_stock requires password confirmation'};
+    }
     return{success:false,error:'Unknown tool'};
+  }
+
+  async function executeClearAllStock(reason){
+    for(const p of prods){
+      await supabase.from('products').update({stock:0}).eq('id',p.id);
+    }
+    await supabase.from('change_log').insert({description:`⚠️ CLEAR ALL STOCK: All ${prods.length} products set to 0 (${reason})`,qty_change:0,user_email:userEmail});
+    await loadAll();
+  }
+
+  const SYSTEM_PASSWORD='BSL2025!';
+
+  async function confirmDangerousAction(){
+    if(passwordInput!==SYSTEM_PASSWORD){
+      setPasswordError('Incorrect password. Try again.');
+      setPasswordInput('');
+      return;
+    }
+    const{toolUseBlock,data,newMsgs,systemPrompt,reason}=pendingDangerousTool;
+    setPendingDangerousTool(null);
+    setPasswordInput('');
+    setPasswordError('');
+    setChatMsgs(prev=>[...prev,{role:'assistant',content:`🔧 Clearing all stock...`}]);
+    try{
+      await executeClearAllStock(reason);
+      // Send second API call so Claude can confirm
+      const toolResult={success:true,message:`All ${prods.length} products have been set to 0 stock.`};
+      const msgs2=[
+        ...newMsgs.filter(m=>m.role!=='system').map(m=>({role:m.role,content:m.content})),
+        {role:'assistant',content:data.content},
+        {role:'user',content:[{type:'tool_result',tool_use_id:toolUseBlock.id,content:JSON.stringify(toolResult)}]}
+      ];
+      const res2=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:500,
+        system:systemPrompt,
+        tools:inventoryTools,
+        messages:msgs2,
+      })});
+      const data2=await res2.json();
+      const finalReply=data2.content?.find(b=>b.type==='text')?.text||'All stock cleared to 0.';
+      setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:finalReply}]);
+    }catch(err){
+      setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:'Error clearing stock. Please try again.'}]);
+    }
   }
 
   async function sendChat(e){
@@ -516,6 +579,14 @@ function AppMain({session}){
       const textBlock=data.content?.find(b=>b.type==='text');
 
       if(toolUseBlock){
+        // Intercept dangerous tools — require password first
+        if(toolUseBlock.name==='clear_all_stock'){
+          setChatMsgs(prev=>[...prev,{role:'assistant',content:`⚠️ This will set ALL ${prods.length} products to 0 stock. Please enter the system password to confirm.`}]);
+          setPendingDangerousTool({toolUseBlock,data,newMsgs,systemPrompt,reason:toolUseBlock.input.reason});
+          setChatLoading(false);
+          return;
+        }
+
         // Show thinking message
         setChatMsgs(prev=>[...prev,{role:'assistant',content:`🔧 Updating inventory...`}]);
         
@@ -803,6 +874,25 @@ function AppMain({session}){
               {chatLoading&&<div style={{display:'flex',justifyContent:'flex-start'}}><div style={{padding:'10px 14px',borderRadius:12,background:'#f0f0f0',fontSize:13,color:'#888'}}>{t.thinking}</div></div>}
               <div ref={chatEndRef}/>
             </div>
+            {pendingDangerousTool&&(
+              <div style={{background:'#FFF3CD',border:'1px solid #ffc107',borderRadius:10,padding:'12px 14px',marginBottom:'0.75rem'}}>
+                <div style={{fontSize:13,fontWeight:600,color:'#856404',marginBottom:8}}>🔐 Password required to clear all stock</div>
+                <div style={{display:'flex',gap:8}}>
+                  <input
+                    style={{...S.inp,flex:1,borderColor:passwordError?'#dc3545':'#ffc107'}}
+                    type="password"
+                    placeholder="Enter system password..."
+                    value={passwordInput}
+                    onChange={e=>{setPasswordInput(e.target.value);setPasswordError('');}}
+                    onKeyDown={async e=>{if(e.key==='Enter')await confirmDangerousAction();}}
+                    autoFocus
+                  />
+                  <button style={{...S.btn,background:'#dc3545',color:'#fff',border:'none'}} onClick={async()=>await confirmDangerousAction()}>Confirm</button>
+                  <button style={S.btn} onClick={()=>{setPendingDangerousTool(null);setPasswordInput('');setPasswordError('');setChatMsgs(prev=>[...prev,{role:'assistant',content:'Action cancelled.'}]);}}>Cancel</button>
+                </div>
+                {passwordError&&<div style={{fontSize:11,color:'#dc3545',marginTop:5}}>{passwordError}</div>}
+              </div>
+            )}
             <div style={{borderTop:'1px solid #eee',paddingTop:'0.75rem'}}>
               {chatFile&&(
                 <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,background:'#f0f7ff',borderRadius:8,padding:'6px 10px'}}>
