@@ -1,4 +1,4 @@
-// BSL Inventory v4.16 - location-updates-total-stock
+// BSL Inventory v4.17 - fix-location-mismatch-warning
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -1618,6 +1618,7 @@ function LocationModal({prod,locations,S,lang,onClose,onSave,onDelete}){
   const isES=lang==='es';
   const prodLocs=locations.filter(l=>l.product_id===prod.id);
   // Build editable rows: one per known location, pre-filled if exists
+  const[dirty,setDirty]=useState(false);
   const[rows,setRows]=useState(()=>LOCATIONS.map(loc=>{
     const existing=prodLocs.find(l=>l.location===loc);
     return existing?{...existing}:{location:loc,qty:0,notes:'',_new:true};
@@ -1625,7 +1626,7 @@ function LocationModal({prod,locations,S,lang,onClose,onSave,onDelete}){
   const[saving,setSaving]=useState(false);
   const total=rows.reduce((a,r)=>a+(parseFloat(r.qty)||0),0);
 
-  function setRow(i,field,val){setRows(prev=>prev.map((r,ri)=>ri===i?{...r,[field]:val}:r));}
+  function setRow(i,field,val){setDirty(true);setRows(prev=>prev.map((r,ri)=>ri===i?{...r,[field]:val}:r));}
 
   async function handleSave(){
     setSaving(true);
@@ -1669,7 +1670,7 @@ function LocationModal({prod,locations,S,lang,onClose,onSave,onDelete}){
           <span style={{fontSize:12,color:'#555',fontWeight:500}}>{isES?'Total en sistema':'Total in system'}</span>
           <span style={{fontSize:14,fontWeight:700}}>{prod.stock} singles</span>
         </div>
-        {total!==prod.stock&&<div style={{background:'#FFF3CD',borderRadius:8,padding:'7px 12px',marginBottom:'1rem',fontSize:12,color:'#856404'}}>⚠️ {isES?'La suma de ubicaciones':'Location sum'} ({total}) {isES?'no coincide con el stock total':'does not match total stock'} ({prod.stock})</div>}
+        {!dirty&&total!==prod.stock&&<div style={{background:'#FFF3CD',borderRadius:8,padding:'7px 12px',marginBottom:'1rem',fontSize:12,color:'#856404'}}>⚠️ {isES?'La suma de ubicaciones':'Location sum'} ({total}) {isES?'no coincide con el stock total':'does not match total stock'} ({prod.stock})</div>}
 
         {/* Edit rows */}
         <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:'1.25rem'}}>
