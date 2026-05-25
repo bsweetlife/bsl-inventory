@@ -1,4 +1,4 @@
-// BSL Inventory v4.19 - fix-raw-material-label-prod-ref
+// BSL Inventory v4.20 - advanced-cost-calculator-tab
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -63,6 +63,7 @@ const COL_MAP={"name":"name","product name":"name","product":"name","root sku":"
 const gs=p=>{const d=(p.velocity||0)/30;if(!d)return'ok';const v=p.stock/d;return v<=15?'crit':v<=30?'low':'ok'};
 const gd=p=>{const d=(p.velocity||0)/30;return d?Math.round(p.stock/d):null};
 const fm=n=>(n!=null&&n!=='')?'$'+parseFloat(n).toFixed(2):'—';
+const fm2=n=>'$'+parseFloat(n||0).toFixed(4);
 const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)+s.charCodeAt(i))|0;return h.toString()};
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
@@ -143,7 +144,8 @@ function AppMain({session}){
   const[hashes,setHashes]=useState([]);
   const[customers,setCustomers]=useState([]);
   const[agentNotes,setAgentNotes]=useState([]);
-  const[globalSettings,setGlobalSettings]=useState({raw_material_waste_pct:0.005,packaging_waste_pct:0.005,filling_cost:1.15,packaging_cost_default:0.45});
+  const[globalSettings,setGlobalSettings]=useState({raw_material_waste_pct:0.005,packaging_waste_pct:0.005,filling_cost:1.15,packaging_cost_default:0.45,fee_amz:0.15,fee_wmt:0.15,fee_tgt:0.15,fee_temu:0.12,fee_other:0.10});
+  const[costCalcOverrides,setCostCalcOverrides]=useState({});
   const[costModal,setCostModal]=useState(null);
   const[locationModal,setLocationModal]=useState(null);
   const[locations,setLocations]=useState([]);
@@ -846,7 +848,7 @@ function AppMain({session}){
       <nav style={S.nav}>
         <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
           <span style={{fontWeight:700,fontSize:16}}>{t.title}</span>
-          {[['dashboard',t.dashboard],['chat',t.chat],['customers',t.customers],['reports',t.reports],['notes',t.notes]].map(([k,l])=>(
+          {[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['notes',t.notes]].map(([k,l])=>(
             <button key={k} onClick={()=>setPage(k)} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:12}}>{l}</button>
           ))}
         </div>
@@ -1111,6 +1113,10 @@ function AppMain({session}){
             </div>
           </div>
         )}
+        {/* CALCULATOR */}
+        {!loading&&page==='calculator'&&(
+          <CostCalculatorPage prods={prods} globalSettings={globalSettings} calcCost={calcCost} saveGlobalSettings={saveGlobalSettings} costCalcOverrides={costCalcOverrides} setCostCalcOverrides={setCostCalcOverrides} S={S} lang={lang}/>
+        )}
       </main>
 
       {/* MODALS */}
@@ -1136,6 +1142,214 @@ function AppMain({session}){
 }} onDelete={async(id)=>{await supabase.from('inventory_locations').delete().eq('id',id);await loadAll();}}/> }
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
+    </div>
+  );
+}
+
+// ── COST CALCULATOR PAGE ──────────────────────────────────────
+const PLATFORMS_CALC=[
+  {key:'amz',label:'Amazon',feeKey:'fee_amz',color:'#FF9900',priceKey:'amz_sell',packKey:'amz_pack_size'},
+  {key:'wmt',label:'Walmart',feeKey:'fee_wmt',color:'#0071CE',priceKey:'wmt_sell',packKey:'wmt_pack_size'},
+  {key:'tgt',label:'Target',feeKey:'fee_tgt',color:'#CC0000',priceKey:'tgt_sell',packKey:'tgt_pack_size'},
+  {key:'temu',label:'Temu',feeKey:'fee_temu',color:'#FF6533',priceKey:'temu_sell',packKey:'temu_pack_size'},
+];
+
+function CostCalculatorPage({prods,globalSettings,calcCost,saveGlobalSettings,costCalcOverrides,setCostCalcOverrides,S,lang}){
+  const isES=lang==='es';
+  const[editFees,setEditFees]=useState(false);
+  const[fees,setFees]=useState({
+    fee_amz:parseFloat(globalSettings.fee_amz)||0.15,
+    fee_wmt:parseFloat(globalSettings.fee_wmt)||0.15,
+    fee_tgt:parseFloat(globalSettings.fee_tgt)||0.15,
+    fee_temu:parseFloat(globalSettings.fee_temu)||0.12,
+  });
+  const[filterProd,setFilterProd]=useState('');
+  const[expandedProd,setExpandedProd]=useState(null);
+
+  // Per-product per-platform overrides: {prodId: {amz:{ad,shipping}, wmt:{ad,shipping},...}}
+  function getOverride(prodId,platKey){
+    return costCalcOverrides[prodId]?.[platKey]||{ad:0,shipping:0};
+  }
+  function setOverride(prodId,platKey,field,val){
+    setCostCalcOverrides(prev=>({
+      ...prev,
+      [prodId]:{
+        ...(prev[prodId]||{}),
+        [platKey]:{...((prev[prodId]||{})[platKey]||{}), [field]:parseFloat(val)||0}
+      }
+    }));
+  }
+
+  function calcPlatform(prod,plat){
+    const baseCost=calcCost(prod,globalSettings).total;
+    const packSize=parseFloat(prod[plat.packKey])||1;
+    const costPerPack=baseCost*packSize;
+    // selling price: use product's platform price field
+    const sellPrice=parseFloat(prod[plat.key+'_sell'])||parseFloat(prod.price)||0;
+    const feeRate=parseFloat(fees[plat.feeKey])||0;
+    const{ad,shipping}=getOverride(prod.id,plat.key);
+    const platformFee=sellPrice*feeRate;
+    const totalCost=costPerPack+platformFee+ad+shipping;
+    const profit=sellPrice-totalCost;
+    const margin=sellPrice>0?(profit/sellPrice)*100:0;
+    const breakEven=totalCost>0?totalCost/(1-feeRate):0;
+    return{baseCost,costPerPack,sellPrice,platformFee,ad,shipping,totalCost,profit,margin,breakEven,packSize};
+  }
+
+  const marginColor=(m)=>m>=30?'#28a745':m>=15?'#856404':m>=0?'#e67e22':'#dc3545';
+  const marginBg=(m)=>m>=30?'#d4edda':m>=15?'#FFF3CD':m>=0?'#fdebd0':'#f8d7da';
+
+  const filteredProds=prods.filter(p=>!filterProd||p.name.toLowerCase().includes(filterProd.toLowerCase())||p.sku.toLowerCase().includes(filterProd.toLowerCase()));
+
+  return(
+    <div>
+      {/* Header + fee settings */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1.25rem',flexWrap:'wrap',gap:8}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:600}}>💰 {isES?'Calculadora de Costos':'Cost Calculator'}</div>
+          <div style={{fontSize:12,color:'#888',marginTop:2}}>{isES?'Analiza rentabilidad por canal y producto':'Analyze profitability by channel and product'}</div>
+        </div>
+        <button style={{...S.btn,gap:6}} onClick={()=>setEditFees(f=>!f)}>⚙️ {isES?'Tarifas de plataforma':'Platform Fees'}</button>
+      </div>
+
+      {/* Platform fee editor */}
+      {editFees&&(
+        <div style={{...S.card,marginBottom:'1rem',padding:'1rem 1.25rem'}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:'0.75rem'}}>⚙️ {isES?'Tarifas globales por defecto (%)':'Global Default Fees (%)'}</div>
+          <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-end'}}>
+            {PLATFORMS_CALC.map(plat=>(
+              <div key={plat.key} style={{display:'flex',flexDirection:'column',gap:4,minWidth:100}}>
+                <label style={{fontSize:11,fontWeight:600,color:plat.color}}>{plat.label}</label>
+                <div style={{display:'flex',alignItems:'center',gap:4}}>
+                  <input style={{...S.inp,width:70,textAlign:'center'}} type="number" step="0.1" min="0" max="100"
+                    value={((fees[plat.feeKey]||0)*100).toFixed(1)}
+                    onChange={e=>setFees(prev=>({...prev,[plat.feeKey]:parseFloat(e.target.value)/100||0}))}/>
+                  <span style={{fontSize:12,color:'#888'}}>%</span>
+                </div>
+              </div>
+            ))}
+            <button style={{...S.btnP,padding:'7px 16px',alignSelf:'flex-end'}} onClick={async()=>{
+              await saveGlobalSettings({...globalSettings,...fees});
+              setEditFees(false);
+            }}>Save</button>
+          </div>
+        </div>
+      )}
+
+      {/* Search */}
+      <div style={{marginBottom:'1rem'}}>
+        <input style={{...S.inp,maxWidth:320}} placeholder={isES?'Buscar producto...':'Search product...'} value={filterProd} onChange={e=>setFilterProd(e.target.value)}/>
+      </div>
+
+      {/* Summary cards — all platforms all products */}
+      <div style={{display:'flex',gap:10,marginBottom:'1.25rem',flexWrap:'wrap'}}>
+        {PLATFORMS_CALC.map(plat=>{
+          const margins=filteredProds.map(p=>calcPlatform(p,plat).margin).filter(m=>!isNaN(m));
+          const avg=margins.length?margins.reduce((a,b)=>a+b,0)/margins.length:0;
+          const losing=margins.filter(m=>m<0).length;
+          return(
+            <div key={plat.key} style={{background:'#fff',borderRadius:10,padding:'12px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.07)',minWidth:140,flex:1}}>
+              <div style={{fontSize:11,fontWeight:700,color:plat.color,marginBottom:4}}>{plat.label}</div>
+              <div style={{fontSize:20,fontWeight:700,color:marginColor(avg)}}>{avg.toFixed(1)}%</div>
+              <div style={{fontSize:11,color:'#888'}}>avg margin</div>
+              {losing>0&&<div style={{fontSize:11,color:'#dc3545',marginTop:2}}>⚠️ {losing} losing money</div>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Product rows */}
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {filteredProds.map(prod=>{
+          const isExpanded=expandedProd===prod.id;
+          const baseCost=calcCost(prod,globalSettings).total;
+          return(
+            <div key={prod.id} style={{background:'#fff',borderRadius:12,boxShadow:'0 1px 3px rgba(0,0,0,.07)',overflow:'hidden'}}>
+              {/* Product header row */}
+              <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 16px',cursor:'pointer',borderBottom:isExpanded?'1px solid #eee':'none'}} onClick={()=>setExpandedProd(isExpanded?null:prod.id)}>
+                <div style={{flex:'0 0 220px',minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{prod.name}</div>
+                  <div style={{fontSize:10,color:'#888'}}>{prod.sku} · base cost: {fm2(baseCost)}</div>
+                </div>
+                <div style={{display:'flex',gap:8,flex:1,flexWrap:'wrap'}}>
+                  {PLATFORMS_CALC.map(plat=>{
+                    const r=calcPlatform(prod,plat);
+                    if(!r.sellPrice)return(
+                      <div key={plat.key} style={{flex:1,minWidth:80,background:'#f8f8f8',borderRadius:8,padding:'6px 10px',textAlign:'center'}}>
+                        <div style={{fontSize:10,color:plat.color,fontWeight:600}}>{plat.label}</div>
+                        <div style={{fontSize:11,color:'#ccc',marginTop:2}}>no price</div>
+                      </div>
+                    );
+                    return(
+                      <div key={plat.key} style={{flex:1,minWidth:80,background:marginBg(r.margin),borderRadius:8,padding:'6px 10px',textAlign:'center'}}>
+                        <div style={{fontSize:10,color:plat.color,fontWeight:600}}>{plat.label}</div>
+                        <div style={{fontSize:15,fontWeight:700,color:marginColor(r.margin)}}>{r.margin.toFixed(1)}%</div>
+                        <div style={{fontSize:10,color:'#666'}}>{fm2(r.profit)} profit</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{fontSize:14,color:'#aaa',flexShrink:0}}>{isExpanded?'▲':'▼'}</div>
+              </div>
+
+              {/* Expanded breakdown */}
+              {isExpanded&&(
+                <div style={{padding:'16px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:12}}>
+                    {PLATFORMS_CALC.map(plat=>{
+                      const r=calcPlatform(prod,plat);
+                      const ov=getOverride(prod.id,plat.key);
+                      return(
+                        <div key={plat.key} style={{border:`1.5px solid ${plat.color}33`,borderRadius:10,padding:'12px 14px'}}>
+                          <div style={{fontSize:12,fontWeight:700,color:plat.color,marginBottom:10}}>{plat.label} {r.packSize>1?`(${r.packSize}-pack)`:''}</div>
+                          {/* Editable fields */}
+                          <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:10}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                              <span style={{fontSize:11,color:'#666',whiteSpace:'nowrap'}}>📦 Selling price</span>
+                              <span style={{fontSize:12,fontWeight:600}}>{fm(r.sellPrice)}</span>
+                            </div>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                              <span style={{fontSize:11,color:'#666',whiteSpace:'nowrap'}}>🏭 Product cost</span>
+                              <span style={{fontSize:12}}>{fm2(r.costPerPack)}</span>
+                            </div>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                              <span style={{fontSize:11,color:'#666',whiteSpace:'nowrap'}}>💳 Platform fee ({((fees[plat.feeKey]||0)*100).toFixed(0)}%)</span>
+                              <span style={{fontSize:12,color:'#dc3545'}}>−{fm2(r.platformFee)}</span>
+                            </div>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                              <span style={{fontSize:11,color:'#666',whiteSpace:'nowrap'}}>📣 Ad cost $</span>
+                              <input style={{...S.inp,width:72,textAlign:'right',fontSize:11,padding:'2px 6px'}} type="number" min="0" step="0.01" value={ov.ad||''} placeholder="0.00"
+                                onChange={e=>setOverride(prod.id,plat.key,'ad',e.target.value)}/>
+                            </div>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                              <span style={{fontSize:11,color:'#666',whiteSpace:'nowrap'}}>🚚 Shipping $</span>
+                              <input style={{...S.inp,width:72,textAlign:'right',fontSize:11,padding:'2px 6px'}} type="number" min="0" step="0.01" value={ov.shipping||''} placeholder="0.00"
+                                onChange={e=>setOverride(prod.id,plat.key,'shipping',e.target.value)}/>
+                            </div>
+                          </div>
+                          <div style={{borderTop:'1px solid #eee',paddingTop:8}}>
+                            <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+                              <span style={{fontSize:11,color:'#666'}}>Break-even price</span>
+                              <span style={{fontSize:11,fontWeight:600,color:'#555'}}>{fm(r.breakEven)}</span>
+                            </div>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                              <span style={{fontSize:12,fontWeight:600}}>Net profit</span>
+                              <span style={{fontSize:15,fontWeight:700,color:marginColor(r.margin)}}>{fm2(r.profit)}</span>
+                            </div>
+                            <div style={{marginTop:6,background:marginBg(r.margin),borderRadius:6,padding:'4px 8px',textAlign:'center'}}>
+                              <span style={{fontSize:14,fontWeight:700,color:marginColor(r.margin)}}>{r.margin.toFixed(1)}% margin</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1512,7 +1726,6 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
   }
 
   const c=calc(prod,gs);
-  const fm2=n=>'$'+parseFloat(n||0).toFixed(4);
   const fm4=n=>'$'+parseFloat(n||0).toFixed(4);
   const pct=n=>((n||0)*100).toFixed(2)+'%';
 
