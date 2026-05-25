@@ -1,4 +1,4 @@
-// BSL Inventory v3.3 - supabase-auth-login
+// BSL Inventory v4.5 - cost-breakdown-jumbo-box
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -65,7 +65,7 @@ const gd=p=>{const d=(p.velocity||0)/30;return d?Math.round(p.stock/d):null};
 const fm=n=>(n!=null&&n!=='')?'$'+parseFloat(n).toFixed(2):'—';
 const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)+s.charCodeAt(i))|0;return h.toString()};
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
-const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
+const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
 function readXLSX(file,cb){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];cb(null,XLSX.utils.sheet_to_json(ws,{header:1,defval:''}))}catch(err){cb(err)}};r.readAsArrayBuffer(file)}
 
@@ -188,7 +188,7 @@ function AppMain({session}){
   }
 
   async function saveProduct(form){
-    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1,weight_oz:parseFloat(form.weight_oz)||0,raw_material_cost_per_oz:parseFloat(form.raw_material_cost_per_oz)||0,packaging_cost:parseFloat(form.packaging_cost)||0,box_cost:parseFloat(form.box_cost)||0,jumbo_box_cost:parseFloat(form.jumbo_box_cost)||0,product_type:form.product_type||'finished'};
+    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1,weight_oz:parseFloat(form.weight_oz)||0,raw_material_cost_per_kg:parseFloat(form.raw_material_cost_per_kg)||0,packaging_cost:parseFloat(form.packaging_cost)||0,box_cost:parseFloat(form.box_cost)||0,jumbo_box_cost:parseFloat(form.jumbo_box_cost)||0,product_type:form.product_type||'finished'};
     delete entry.id;
     if(form.id){
       const old=prods.find(p=>p.id===form.id);
@@ -526,12 +526,17 @@ function AppMain({session}){
   const reorderItems=prods.filter(p=>p.stock<=p.reorder&&p.reorder>0);
 
   // ── COST CALCULATOR ──────────────────────────────────────────
+  const OZ_PER_KG=35.274;
   function calcCost(p,gs){
     if(p.product_type!=='packaged')return{total:parseFloat(p.cost)||0,breakdown:null};
     const rmWaste=gs.raw_material_waste_pct||0.005;
     const pkgWaste=gs.packaging_waste_pct||0.005;
     const filling=gs.filling_cost||1.15;
-    const rawMaterial=(p.raw_material_cost_per_oz||0)*(p.weight_oz||0);
+    // Convert price per kg to price per oz
+    const pricePerKg=parseFloat(p.raw_material_cost_per_kg)||0;
+    const pricePerOz=pricePerKg/OZ_PER_KG;
+    const weightOz=parseFloat(p.weight_oz)||0;
+    const rawMaterial=pricePerOz*weightOz;
     const rawWithWaste=rawMaterial*(1+rmWaste);
     const pkgCost=parseFloat(p.packaging_cost)||0;
     const pkgWithWaste=pkgCost*(1+pkgWaste);
@@ -540,9 +545,9 @@ function AppMain({session}){
     const total=rawWithWaste+pkgWithWaste+filling+box+jumboBox;
     return{
       total:Math.round(total*10000)/10000,
-      rawMaterial,rawWithWaste,
+      pricePerKg,pricePerOz,rawMaterial,rawWithWaste,
       pkgCost,pkgWithWaste,filling,box,jumboBox,
-      rmWaste,pkgWaste
+      rmWaste,pkgWaste,weightOz
     };
   }
 
@@ -872,7 +877,7 @@ function AppMain({session}){
 
 // ── PRODUCT MODAL ─────────────────────────────────────────────
 function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
-  const[form,setForm]=useState({...{id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:'',jumbo_box_cost:''},...(mdata.form||{})});
+  const[form,setForm]=useState({...{id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:''},...(mdata.form||{})});
   const isEdit=!!form.id;
   return(
     <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -907,7 +912,7 @@ function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
           {(form.product_type||'finished')==='packaged'&&<>
             {[
               {l:lang==='es'?'Peso (oz)':'Weight (oz)',k:'weight_oz',ph:'12.6'},
-              {l:lang==='es'?'Costo materia prima/oz ($)':'Raw material cost/oz ($)',k:'raw_material_cost_per_oz',ph:'1.51'},
+              {l:lang==='es'?'Precio materia prima/kg ($)':'Raw material price/kg ($)',k:'raw_material_cost_per_kg',ph:'4.24'},
               {l:lang==='es'?'Costo empaque ($)':'Packaging cost ($)',k:'packaging_cost',ph:'0.50'},
               {l:lang==='es'?'Costo caja ($)':'Box cost ($)',k:'box_cost',ph:'0.05'},
               {l:lang==='es'?'Costo caja jumbo ($) (opcional)':'Jumbo box cost ($) (optional)',k:'jumbo_box_cost',ph:'0.00'},
@@ -1264,14 +1269,15 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
         <div style={{background:'#f8f8f8',borderRadius:8,padding:'10px 12px',marginBottom:'1rem',display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
           <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Peso':'Weight'}</div><div style={{fontSize:13,fontWeight:600}}>{prod.weight_oz||0} oz</div></div>
           <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Precio venta':'Selling price'}</div><div style={{fontSize:13,fontWeight:600}}>${prod.price||0}</div></div>
-          <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Costo materia prima/oz':'Raw material/oz'}</div><div style={{fontSize:13,fontWeight:600}}>${prod.raw_material_cost_per_oz||0}</div></div>
+          <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Precio materia prima/kg':'Raw material/kg'}</div><div style={{fontSize:13,fontWeight:600}}>${prod.raw_material_cost_per_kg||0}/kg</div></div>
+          <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Costo por oz':'Cost per oz'}</div><div style={{fontSize:13,fontWeight:600}}>${((parseFloat(prod.raw_material_cost_per_kg)||0)/35.274).toFixed(4)}/oz</div></div>
           <div><div style={{fontSize:10,color:'#aaa'}}>{isES?'Costo empaque':'Packaging'}</div><div style={{fontSize:13,fontWeight:600}}>${prod.packaging_cost||0}</div></div>
         </div>
 
         {/* Cost breakdown table */}
         <div style={{marginBottom:'1rem'}}>
           <div style={{fontSize:11,fontWeight:600,color:'#888',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:6}}>{isES?'Materia Prima':'Raw Material'}</div>
-          {row(isES?'Costo materia prima':'Raw material cost', fm2((prod.raw_material_cost_per_oz||0)*(prod.weight_oz||0)), `${prod.raw_material_cost_per_oz||0}/oz × ${prod.weight_oz||0}oz`)}
+          {row(isES?'Materia prima (Leche)':'Raw material (Milk)', fm2(c.rawMaterial), `$${(c.pricePerOz||0).toFixed(4)}/oz × ${c.weightOz}oz`)}
           {row(isES?`Merma (${pct(gs.raw_material_waste_pct)})`:`Waste (${pct(gs.raw_material_waste_pct)})`, fm2(c.rawWithWaste-c.rawMaterial))}
           {row(isES?'Costo MP + Merma':'Raw Material + Waste', fm2(c.rawWithWaste), null, true)}
         </div>
