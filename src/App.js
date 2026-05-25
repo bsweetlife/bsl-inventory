@@ -1,4 +1,4 @@
-// BSL Inventory v4.8 - inventory-value-uses-calcCost
+// BSL Inventory v4.9 - resizable-columns
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -602,27 +602,55 @@ function AppMain({session}){
   );
 
   // ── PRODUCT TABLE ────────────────────────────────────────────
+  const[colWidths,setColWidths]=useState({status:70,name:220,sku:120,stock:90,days:70,cost:90,price:90,actions:80});
+  const resizing=useRef(null);
+  function onResizeStart(col,e){
+    e.preventDefault();
+    const startX=e.clientX;
+    const startW=colWidths[col];
+    resizing.current={col,startX,startW};
+    function onMove(ev){
+      const delta=ev.clientX-resizing.current.startX;
+      const newW=Math.max(50,resizing.current.startW+delta);
+      setColWidths(prev=>({...prev,[resizing.current.col]:newW}));
+    }
+    function onUp(){
+      resizing.current=null;
+      window.removeEventListener('mousemove',onMove);
+      window.removeEventListener('mouseup',onUp);
+    }
+    window.addEventListener('mousemove',onMove);
+    window.addEventListener('mouseup',onUp);
+  }
+  const ResizeTh=({col,children,onClick,style})=>(
+    <th style={{...S.th,width:colWidths[col],minWidth:colWidths[col],maxWidth:colWidths[col],position:'relative',userSelect:'none',...style}} onClick={onClick}>
+      {children}
+      <span onMouseDown={e=>onResizeStart(col,e)} style={{position:'absolute',right:0,top:0,bottom:0,width:6,cursor:'col-resize',background:'transparent',zIndex:10}} onClick={e=>e.stopPropagation()}/>
+    </th>
+  );
   const ProdTable=({list})=>{
     if(!list.length)return<div style={{textAlign:'center',padding:'2rem',color:'#aaa',fontSize:13}}>{tab==='alerts'?t.noAlerts:t.noProducts}</div>;
-    const SortTh=({col,children})=><th style={{...S.th,cursor:'pointer',userSelect:'none'}} onClick={()=>toggleSort(col)}>{children} <span style={{color:'#4a90e2'}}>{sortIcon(col)}</span></th>;
     return(
       <div style={{overflowX:'auto',border:'1px solid #eee',borderRadius:12}}>
-        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+        <table style={{tableLayout:'fixed',width:Object.values(colWidths).reduce((a,b)=>a+b,0),borderCollapse:'collapse',fontSize:12}}>
+          <colgroup>
+            {Object.entries(colWidths).map(([col,w])=><col key={col} style={{width:w}}/>)}
+          </colgroup>
           <thead><tr>
-            <SortTh col="status">{t.status}</SortTh>
-            <SortTh col="name">{t.product}</SortTh>
-            <th style={S.th}>{t.rootSku}</th>
-            <SortTh col="stock">{t.stock}</SortTh>
-            <SortTh col="days">{t.days}</SortTh>
-            <SortTh col="cost">{t.cost}</SortTh>
-            <SortTh col="price">{t.price}</SortTh>
-            <th style={S.th}>{t.actions}</th>
+            <ResizeTh col="status" onClick={()=>toggleSort('status')}>{t.status} <span style={{color:'#4a90e2'}}>{sortIcon('status')}</span></ResizeTh>
+            <ResizeTh col="name" onClick={()=>toggleSort('name')}>{t.product} <span style={{color:'#4a90e2'}}>{sortIcon('name')}</span></ResizeTh>
+            <ResizeTh col="sku">{t.rootSku}</ResizeTh>
+            <ResizeTh col="stock" onClick={()=>toggleSort('stock')}>{t.stock} <span style={{color:'#4a90e2'}}>{sortIcon('stock')}</span></ResizeTh>
+            <ResizeTh col="days" onClick={()=>toggleSort('days')}>{t.days} <span style={{color:'#4a90e2'}}>{sortIcon('days')}</span></ResizeTh>
+            <ResizeTh col="cost" onClick={()=>toggleSort('cost')}>{t.cost} <span style={{color:'#4a90e2'}}>{sortIcon('cost')}</span></ResizeTh>
+            <ResizeTh col="price" onClick={()=>toggleSort('price')}>{t.price} <span style={{color:'#4a90e2'}}>{sortIcon('price')}</span></ResizeTh>
+            <ResizeTh col="actions">{t.actions}</ResizeTh>
           </tr></thead>
           <tbody>
             {list.map(p=>{const st=gs(p),dl=gd(p);return(
               <tr key={p.id}>
                 <td style={S.td}><Badge status={st} t={t}/></td>
-                <td style={{...S.td,fontWeight:500,maxWidth:160}} title={p.name}>{p.name}</td>
+                <td style={{...S.td,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
                 <td style={S.td}><code style={{fontSize:10,background:'#f5f5f5',padding:'1px 5px',borderRadius:4}}>{p.sku||'—'}</code></td>
                 <td style={{...S.td,color:p.stock<0?'#dc3545':undefined}}>{p.stock}</td>
                 <td style={{...S.td,color:st==='crit'?'#dc3545':st==='low'?'#856404':undefined}}>{dl!=null?`${dl}d`:'—'}</td>
