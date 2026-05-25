@@ -65,7 +65,7 @@ const gd=p=>{const d=(p.velocity||0)/30;return d?Math.round(p.stock/d):null};
 const fm=n=>(n!=null&&n!=='')?'$'+parseFloat(n).toFixed(2):'—';
 const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)+s.charCodeAt(i))|0;return h.toString()};
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
-const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1});
+const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:'',cost_notes:''});
 
 function readXLSX(file,cb){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];cb(null,XLSX.utils.sheet_to_json(ws,{header:1,defval:''}))}catch(err){cb(err)}};r.readAsArrayBuffer(file)}
 
@@ -886,18 +886,35 @@ function ProductModal({t,S,mdata,setMdata,onSave,onClose}){
             </label>
           ))}
         </div>
-      {[{l:t.productName,k:'name',full:true,ph:'Lactose Free 1.5lb'},{l:'Root SKU',k:'sku',ph:'BSL-LACT-150'},{l:t.category,k:'category',ph:'Lactose Free'},{l:`${t.stock}`,k:'stock',t:'number',ph:'0'},{l:t.monthlyS,k:'velocity',t:'number',ph:'0'},{l:`${t.price} ($)`,k:'price',t:'number',ph:'0.00'},{l:t.reorder,k:'reorder',t:'number',ph:'0'},
-                ...(( form.product_type||'finished')==='packaged'?[
-                  {l:lang==='es'?'Peso (oz)':'Weight (oz)',k:'weight_oz',t:'number',ph:'12.6'},
-                  {l:lang==='es'?'Costo materia prima/oz':'Raw material cost/oz ($)',k:'raw_material_cost_per_oz',t:'number',ph:'1.51'},
-                  {l:lang==='es'?'Costo empaque':'Packaging cost ($)',k:'packaging_cost',t:'number',ph:'0.50'},
-                  {l:lang==='es'?'Costo caja':'Box cost ($)',k:'box_cost',t:'number',ph:'0.05'},
-                ]:[{l:t.cost+' ($)',k:'cost',t:'number',ph:'0.00'}]),{l:t.supplier,k:'supplier',full:true,ph:'EVI Labs'}].map(f=>(
+      {[{l:t.productName,k:'name',full:true,ph:'Lactose Free 1.5lb'},{l:'Root SKU',k:'sku',ph:'BSL-LACT-150'},{l:t.category,k:'category',ph:'Lactose Free'},{l:`${t.stock}`,k:'stock',t:'number',ph:'0'},{l:t.monthlyS,k:'velocity',t:'number',ph:'0'},{l:`${t.price} ($)`,k:'price',t:'number',ph:'0.00'},{l:t.reorder,k:'reorder',t:'number',ph:'0'},{l:t.supplier,k:'supplier',full:true,ph:'EVI Labs'}].map(f=>(
             <div key={f.k} style={{gridColumn:f.full?'1/-1':undefined,display:'flex',flexDirection:'column',gap:3}}>
               <label style={{fontSize:11,color:'#888',fontWeight:500}}>{f.l}</label>
               <input style={S.inp} type={f.t||'text'} placeholder={f.ph} value={form[f.k]||''} onChange={e=>setForm(prev=>({...prev,[f.k]:e.target.value}))}/>
             </div>
           ))}
+          {/* Cost fields - shown based on product type */}
+          <div style={{gridColumn:'1/-1',fontSize:10,fontWeight:600,color:'#888',textTransform:'uppercase',letterSpacing:'.05em',marginTop:6,paddingTop:8,borderTop:'1px solid #eee'}}>
+            {(form.product_type||'finished')==='packaged'?(lang==='es'?'Desglose de Costos':'Cost Breakdown'):(lang==='es'?'Costo':'Cost')}
+          </div>
+          {(form.product_type||'finished')==='finished'&&(
+            <div style={{display:'flex',flexDirection:'column',gap:3}}>
+              <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.cost} ($)</label>
+              <input style={S.inp} type="number" placeholder="0.00" value={form.cost||''} onChange={e=>setForm(prev=>({...prev,cost:e.target.value}))}/>
+            </div>
+          )}
+          {(form.product_type||'finished')==='packaged'&&<>
+            {[
+              {l:lang==='es'?'Peso (oz)':'Weight (oz)',k:'weight_oz',ph:'12.6'},
+              {l:lang==='es'?'Costo materia prima/oz ($)':'Raw material cost/oz ($)',k:'raw_material_cost_per_oz',ph:'1.51'},
+              {l:lang==='es'?'Costo empaque ($)':'Packaging cost ($)',k:'packaging_cost',ph:'0.50'},
+              {l:lang==='es'?'Costo caja ($)':'Box cost ($)',k:'box_cost',ph:'0.05'},
+            ].map(f=>(
+              <div key={f.k} style={{display:'flex',flexDirection:'column',gap:3}}>
+                <label style={{fontSize:11,color:'#888',fontWeight:500}}>{f.l}</label>
+                <input style={S.inp} type="number" placeholder={f.ph} value={form[f.k]||''} onChange={e=>setForm(prev=>({...prev,[f.k]:e.target.value}))}/>
+              </div>
+            ))}
+          </>}
           <div style={{gridColumn:'1/-1',fontSize:10,fontWeight:600,color:'#888',textTransform:'uppercase',letterSpacing:'.05em',marginTop:6,paddingTop:8,borderTop:'1px solid #eee'}}>{t.marketplaceSKUs}</div>
           {[{l:t.amazonSku,k:'amz',pk:'amz_pack_size'},{l:t.walmartSku,k:'wmt',pk:'wmt_pack_size'},{l:t.targetSku,k:'tgt',pk:'tgt_pack_size'},{l:t.temuSku,k:'temu',pk:'temu_pack_size'},{l:t.otherSku,k:'other_sku',pk:'other_pack_size'}].map(f=>(
             <div key={f.k} style={{display:'flex',flexDirection:'column',gap:3}}>
