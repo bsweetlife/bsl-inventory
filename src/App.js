@@ -1,4 +1,4 @@
-// BSL Inventory v4.5 - cost-breakdown-jumbo-box
+// BSL Inventory v4.7 - cost-breakdown-kg-fix, bulk-import-new-cols
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -58,7 +58,7 @@ const T = {
 
 const PLAT={amazon:{l:'Amazon',c:'#FF9900',sku:['sku','seller-sku','asin'],qty:['quantity','quantity-purchased','qty','units'],oid:['amazon-order-id','order-id','order_id']},walmart:{l:'Walmart',c:'#0071DC',sku:['sku','item-sku','seller-sku'],qty:['qty','quantity','units-ordered'],oid:['order_id','purchase-order-id','order-id']},target:{l:'Target Plus',c:'#CC0000',sku:['sku','tcin','seller-sku'],qty:['quantity','qty','quantity-ordered'],oid:['order-id','po-number','order_id']},temu:{l:'Temu',c:'#7B2D8B',sku:['sku','product-sku','seller-sku'],qty:['quantity','qty','amount'],oid:['order-id','order_id','order-number']},other:{l:'Other',c:'#888',sku:['sku','item-sku','product-sku'],qty:['quantity','qty','units'],oid:['order-id','order_id']}};
 const MPK=['amz','wmt','tgt','temu','other_sku'];
-const COL_MAP={"name":"name","product name":"name","product":"name","root sku":"sku","sku":"sku","category":"category","cat":"category","stock":"stock","stock (singles)":"stock","current stock":"stock","qty":"stock","quantity":"stock","monthly sales":"velocity","monthly sales (singles)":"velocity","velocity":"velocity","cost":"cost","cost per single ($)":"cost","cost price":"cost","price":"price","selling price single ($)":"price","selling price":"price","reorder":"reorder","reorder point":"reorder","reorder point (singles)":"reorder","supplier":"supplier","supplier name":"supplier","amazon sku":"amz","amz":"amz","amz pack size":"amz_pack_size","walmart sku":"wmt","wmt":"wmt","wmt pack size":"wmt_pack_size","target sku":"tgt","tgt":"tgt","tgt pack size":"tgt_pack_size","temu sku":"temu","temu":"temu","temu pack size":"temu_pack_size","other sku":"other_sku","other":"other_sku","other pack size":"other_pack_size","product notes":"notes_field"};
+const COL_MAP={"name":"name","product name":"name","product":"name","root sku":"sku","sku":"sku","category":"category","cat":"category","stock":"stock","stock (singles)":"stock","current stock":"stock","qty":"stock","quantity":"stock","monthly sales":"velocity","monthly sales (singles)":"velocity","velocity":"velocity","cost":"cost","cost per single ($)":"cost","cost price":"cost","price":"price","selling price single ($)":"price","selling price":"price","reorder":"reorder","reorder point":"reorder","reorder point (singles)":"reorder","supplier":"supplier","supplier name":"supplier","amazon sku":"amz","amz":"amz","amz pack size":"amz_pack_size","walmart sku":"wmt","wmt":"wmt","wmt pack size":"wmt_pack_size","target sku":"tgt","tgt":"tgt","tgt pack size":"tgt_pack_size","temu sku":"temu","temu":"temu","temu pack size":"temu_pack_size","other sku":"other_sku","other":"other_sku","other pack size":"other_pack_size","product notes":"notes_field","raw material cost per kg":"raw_material_cost_per_kg","raw material price per kg":"raw_material_cost_per_kg","raw_material_cost_per_kg":"raw_material_cost_per_kg","raw material/kg":"raw_material_cost_per_kg","jumbo box cost":"jumbo_box_cost","jumbo_box_cost":"jumbo_box_cost","jumbo box":"jumbo_box_cost","weight oz":"weight_oz","weight (oz)":"weight_oz","packaging cost":"packaging_cost","packaging_cost":"packaging_cost","box cost":"box_cost","box_cost":"box_cost"};
 
 const gs=p=>{const d=(p.velocity||0)/30;if(!d)return'ok';const v=p.stock/d;return v<=15?'crit':v<=30?'low':'ok'};
 const gd=p=>{const d=(p.velocity||0)/30;return d?Math.round(p.stock/d):null};
@@ -221,7 +221,7 @@ function AppMain({session}){
       rows.slice(1).filter(r=>r.some(c=>c!=='')).forEach((row,i)=>{
         const o={};fm2.forEach((ff,ci)=>{if(ff)o[ff]=(row[ci]??'').toString().trim()});
         if(!o.name){errors.push(`Row ${i+2}: no name`);return;}
-        parsed.push({name:o.name,sku:o.sku||'',category:o.category||'',stock:parseFloat(o.stock)||0,velocity:parseFloat(o.velocity)||0,cost:parseFloat(o.cost)||0,price:parseFloat(o.price)||0,reorder:parseFloat(o.reorder)||0,supplier:o.supplier||'',amz:o.amz||'',wmt:o.wmt||'',tgt:o.tgt||'',temu:o.temu||'',other_sku:o.other_sku||'',amz_pack_size:parseFloat(o.amz_pack_size)||1,wmt_pack_size:parseFloat(o.wmt_pack_size)||1,tgt_pack_size:parseFloat(o.tgt_pack_size)||1,temu_pack_size:parseFloat(o.temu_pack_size)||1,other_pack_size:parseFloat(o.other_pack_size)||1});
+        parsed.push({name:o.name,sku:o.sku||'',category:o.category||'',stock:parseFloat(o.stock)||0,velocity:parseFloat(o.velocity)||0,cost:parseFloat(o.cost)||0,price:parseFloat(o.price)||0,reorder:parseFloat(o.reorder)||0,supplier:o.supplier||'',amz:o.amz||'',wmt:o.wmt||'',tgt:o.tgt||'',temu:o.temu||'',other_sku:o.other_sku||'',amz_pack_size:parseFloat(o.amz_pack_size)||1,wmt_pack_size:parseFloat(o.wmt_pack_size)||1,tgt_pack_size:parseFloat(o.tgt_pack_size)||1,temu_pack_size:parseFloat(o.temu_pack_size)||1,other_pack_size:parseFloat(o.other_pack_size)||1,weight_oz:parseFloat(o.weight_oz)||0,raw_material_cost_per_kg:parseFloat(o.raw_material_cost_per_kg)||0,packaging_cost:parseFloat(o.packaging_cost)||0,box_cost:parseFloat(o.box_cost)||0,jumbo_box_cost:parseFloat(o.jumbo_box_cost)||0});
       });
       setMdata(prev=>({...prev,step:2,parsed,errors}));
     });
@@ -385,15 +385,15 @@ function AppMain({session}){
 
   // ── EXPORT CSV ──────────────────────────────────────────────
   function exportCSV(){
-    const headers=['Name','Root SKU','Category','Stock (Singles)','Monthly Sales','Cost','Price','Reorder','Supplier','Amazon SKU','AMZ Pack','Walmart SKU','WMT Pack','Target SKU','TGT Pack','Temu SKU','Temu Pack','Other SKU','Other Pack','Status','Days Left'];
-    const rows=prods.map(p=>[p.name,p.sku,p.category,p.stock,p.velocity,p.cost,p.price,p.reorder,p.supplier,p.amz,p.amz_pack_size||1,p.wmt,p.wmt_pack_size||1,p.tgt,p.tgt_pack_size||1,p.temu,p.temu_pack_size||1,p.other_sku,p.other_pack_size||1,gs(p),gd(p)??'—'].map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','));
+    const headers=['Name','Root SKU','Category','Stock (Singles)','Monthly Sales','Cost','Price','Reorder','Supplier','Amazon SKU','AMZ Pack','Walmart SKU','WMT Pack','Target SKU','TGT Pack','Temu SKU','Temu Pack','Other SKU','Other Pack','Status','Days Left','Product Type','Weight (oz)','Raw Material/kg ($)','Packaging Cost ($)','Box Cost ($)','Jumbo Box Cost ($)'];
+    const rows=prods.map(p=>[p.name,p.sku,p.category,p.stock,p.velocity,p.cost,p.price,p.reorder,p.supplier,p.amz,p.amz_pack_size||1,p.wmt,p.wmt_pack_size||1,p.tgt,p.tgt_pack_size||1,p.temu,p.temu_pack_size||1,p.other_sku,p.other_pack_size||1,gs(p),gd(p)??'—',p.product_type||'finished',p.weight_oz||'',p.raw_material_cost_per_kg||'',p.packaging_cost||'',p.box_cost||'',p.jumbo_box_cost||''].map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','));
     const csv=[headers.join(','),...rows].join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='bsl_inventory_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
   }
 
   function downloadTemplate(){
-    const h=['Root SKU','Product Name','Category','Supplier','Stock (Singles)','Monthly Sales (Singles)','Cost Per Single ($)','Selling Price Single ($)','Reorder Point (Singles)','Amazon SKU','AMZ Pack Size','AMZ Selling Price ($)','Walmart SKU','WMT Pack Size','WMT Selling Price ($)','Target SKU','TGT Pack Size','TGT Selling Price ($)','Temu SKU','Temu Pack Size','Temu Selling Price ($)','Other SKU','Other Pack Size','Other Selling Price ($)','Product Notes'];
-    const ex=['BSL-LACT-150','Lactose Free 1.5lb','Lactose Free','EVI Labs','0','0','0.00','0.00','0','AMZ-LF150-001','6','0.00','WMT-LF150-001','6','0.00','','1','0.00','','1','0.00','','1','0.00','EVI Labs product'];
+    const h=['Root SKU','Product Name','Category','Supplier','Stock (Singles)','Monthly Sales (Singles)','Cost Per Single ($)','Selling Price Single ($)','Reorder Point (Singles)','Amazon SKU','AMZ Pack Size','AMZ Selling Price ($)','Walmart SKU','WMT Pack Size','WMT Selling Price ($)','Target SKU','TGT Pack Size','TGT Selling Price ($)','Temu SKU','Temu Pack Size','Temu Selling Price ($)','Other SKU','Other Pack Size','Other Selling Price ($)','Product Notes','Weight (oz)','Raw Material Cost Per Kg','Packaging Cost','Box Cost','Jumbo Box Cost'];
+    const ex=['BSL-LACT-150','Lactose Free 1.5lb','Lactose Free','EVI Labs','0','0','0.00','0.00','0','AMZ-LF150-001','6','0.00','WMT-LF150-001','6','0.00','','1','0.00','','1','0.00','','1','0.00','EVI Labs product','24','4.24','0.50','0.05','0.00'];
     const csv=[h,ex].map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='BSL_SKU_Template.csv';a.click();
   }
@@ -1228,16 +1228,22 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
   const[editingGs,setEditingGs]=useState(false);
   const isES=lang==='es';
 
+  const OZ_PER_KG_MODAL=35.274;
   function calc(p,g){
     const rmWaste=g.raw_material_waste_pct||0.005;
     const pkgWaste=g.packaging_waste_pct||0.005;
     const filling=g.filling_cost||1.15;
-    const rawMaterial=(p.raw_material_cost_per_oz||0)*(p.weight_oz||0);
+    const pricePerKg=parseFloat(p.raw_material_cost_per_kg)||0;
+    const pricePerOz=pricePerKg/OZ_PER_KG_MODAL;
+    const weightOz=parseFloat(p.weight_oz)||0;
+    const rawMaterial=pricePerOz*weightOz;
     const rawWithWaste=rawMaterial*(1+rmWaste);
-    const pkgWithWaste=(p.packaging_cost||0)*(1+pkgWaste);
-    const box=p.box_cost||0;
-    const total=rawWithWaste+pkgWithWaste+filling+box;
-    return{rawMaterial,rawWithWaste,pkgCost:p.packaging_cost||0,pkgWithWaste,filling,box,total};
+    const pkgCost=parseFloat(p.packaging_cost)||0;
+    const pkgWithWaste=pkgCost*(1+pkgWaste);
+    const box=parseFloat(p.box_cost)||0;
+    const jumboBox=parseFloat(p.jumbo_box_cost)||0;
+    const total=rawWithWaste+pkgWithWaste+filling+box+jumboBox;
+    return{pricePerKg,pricePerOz,weightOz,rawMaterial,rawWithWaste,pkgCost,pkgWithWaste,filling,box,jumboBox,total};
   }
 
   const c=calc(prod,gs);
@@ -1277,7 +1283,7 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
         {/* Cost breakdown table */}
         <div style={{marginBottom:'1rem'}}>
           <div style={{fontSize:11,fontWeight:600,color:'#888',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:6}}>{isES?'Materia Prima':'Raw Material'}</div>
-          {row(isES?'Materia prima (Leche)':'Raw material (Milk)', fm2(c.rawMaterial), `$${(c.pricePerOz||0).toFixed(4)}/oz × ${c.weightOz}oz`)}
+          {row(isES?'Materia prima (Leche)':'Raw material (Milk)', fm2(c.rawMaterial), `$${c.pricePerOz.toFixed(4)}/oz × ${c.weightOz}oz`)}
           {row(isES?`Merma (${pct(gs.raw_material_waste_pct)})`:`Waste (${pct(gs.raw_material_waste_pct)})`, fm2(c.rawWithWaste-c.rawMaterial))}
           {row(isES?'Costo MP + Merma':'Raw Material + Waste', fm2(c.rawWithWaste), null, true)}
         </div>
