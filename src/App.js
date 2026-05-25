@@ -1,4 +1,4 @@
-// BSL Inventory v4.14 - fix-clear-stock-no-double-password
+// BSL Inventory v4.15 - chat-sessions
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -153,6 +153,9 @@ function AppMain({session}){
   const[chatMsgs,setChatMsgs]=useState([]);
   const[chatInput,setChatInput]=useState('');
   const[chatLoading,setChatLoading]=useState(false);
+  const[chatSessions,setChatSessions]=useState([]);
+  const[currentSessionId,setCurrentSessionId]=useState(null);
+  const[sessionsLoading,setSessionsLoading]=useState(false);
   const[chatFile,setChatFile]=useState(null);
   const[pendingDangerousTool,setPendingDangerousTool]=useState(null);
   const[passwordInput,setPasswordInput]=useState('');
@@ -184,6 +187,8 @@ function AppMain({session}){
       if(n)setAgentNotes(n);
       if(gs){const s={};gs.forEach(g=>s[g.key]=parseFloat(g.value));setGlobalSettings(prev=>({...prev,...s}));}
       if(locs)setLocations(locs);
+      // Load chat sessions separately (not blocking)
+      loadChatSessions();
     }catch(e){console.error(e);}
     setLoading(false);
     setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
@@ -488,6 +493,59 @@ function AppMain({session}){
 
   const SYSTEM_PASSWORD='BSL2025!';
 
+  // ── CHAT SESSIONS ─────────────────────────────────────────────
+  async function loadChatSessions(){
+    setSessionsLoading(true);
+    const{data}=await supabase.from('chat_sessions').select('id,title,created_at,updated_at').eq('user_email',userEmail).order('updated_at',{ascending:false}).limit(50);
+    if(data)setChatSessions(data);
+    setSessionsLoading(false);
+  }
+
+  async function saveSessionMessages(sessionId,msgs){
+    const filtered=msgs.filter(m=>typeof m.content==='string');
+    await supabase.from('chat_sessions').update({messages:filtered,updated_at:new Date().toISOString()}).eq('id',sessionId);
+  }
+
+  async function createNewSession(firstUserMsg){
+    const title=firstUserMsg.slice(0,60)+(firstUserMsg.length>60?'...':'');
+    const{data}=await supabase.from('chat_sessions').insert({user_email:userEmail,title,messages:[],created_at:new Date().toISOString(),updated_at:new Date().toISOString()}).select().single();
+    if(data){
+      setCurrentSessionId(data.id);
+      setChatSessions(prev=>[{id:data.id,title,created_at:data.created_at,updated_at:data.updated_at},...prev]);
+      return data.id;
+    }
+    return null;
+  }
+
+  async function loadSession(session){
+    const{data}=await supabase.from('chat_sessions').select('messages').eq('id',session.id).single();
+    if(data&&data.messages&&data.messages.length>0){
+      setChatMsgs(data.messages);
+    }else{
+      setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+    }
+    setCurrentSessionId(session.id);
+    setPage('chat');
+  }
+
+  async function deleteSession(id,e){
+    e.stopPropagation();
+    if(!window.confirm('Delete this conversation?'))return;
+    await supabase.from('chat_sessions').delete().eq('id',id);
+    setChatSessions(prev=>prev.filter(s=>s.id!==id));
+    if(currentSessionId===id){
+      setCurrentSessionId(null);
+      setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+    }
+  }
+
+  function startNewChat(){
+    setCurrentSessionId(null);
+    setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+    setChatInput('');
+    setChatFile(null);
+  }
+
   async function confirmDangerousAction(){
     if(passwordInput!==SYSTEM_PASSWORD){
       setPasswordError('Incorrect password. Try again.');
@@ -551,6 +609,11 @@ function AppMain({session}){
     const newMsgs=[...chatMsgs,displayMsg];
     setChatMsgs(newMsgs);
     setChatLoading(true);
+    // Auto-create session on first real user message
+    let sessionId=currentSessionId;
+    if(!sessionId&&!chatMsgs.some(m=>m.role==='user')){
+      sessionId=await createNewSession(userMsg||(fileToSend?fileToSend.name:'New chat'));
+    }
     try{
       const notesContext=agentNotes.length?`\nPermanent notes & instructions:\n${agentNotes.map(n=>`[${n.category}] ${n.title}: ${n.content}`).join('\n')}`:'';
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
@@ -608,11 +671,11 @@ function AppMain({session}){
         })});
         const data2=await res2.json();
         const finalReply=data2.content?.find(b=>b.type==='text')?.text||'Done!';
-        // Replace thinking message with final reply
-        setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:finalReply}]);
+        // Replace thinking message with final reply + auto-save
+        setChatMsgs(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
       } else {
         const reply=textBlock?.text||'Sorry, I could not process that.';
-        setChatMsgs(prev=>[...prev,{role:'assistant',content:reply}]);
+        setChatMsgs(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
       }
     }catch(err){
       console.error(err);
@@ -863,50 +926,69 @@ function AppMain({session}){
 
         {/* CHAT */}
         {!loading&&page==='chat'&&(
-          <div style={{...S.card,display:'flex',flexDirection:'column',height:'calc(100vh - 120px)'}}>
-            <div style={{fontSize:16,fontWeight:600,marginBottom:'1rem',paddingBottom:'0.75rem',borderBottom:'1px solid #eee'}}>{t.chat}</div>
-            <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column',gap:12,paddingBottom:'1rem'}}>
-              {chatMsgs.map((m,i)=>(
-                <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
-                  <div style={{maxWidth:'78%',padding:'10px 14px',borderRadius:12,background:m.role==='user'?'#111':'#f0f0f0',color:m.role==='user'?'#fff':'#111',fontSize:13,lineHeight:1.5,whiteSpace:'pre-wrap'}}>{m.content}</div>
-                </div>
-              ))}
-              {chatLoading&&<div style={{display:'flex',justifyContent:'flex-start'}}><div style={{padding:'10px 14px',borderRadius:12,background:'#f0f0f0',fontSize:13,color:'#888'}}>{t.thinking}</div></div>}
-              <div ref={chatEndRef}/>
-            </div>
-            {pendingDangerousTool&&(
-              <div style={{background:'#FFF3CD',border:'1px solid #ffc107',borderRadius:10,padding:'12px 14px',marginBottom:'0.75rem'}}>
-                <div style={{fontSize:13,fontWeight:600,color:'#856404',marginBottom:8}}>🔐 Password required to clear all stock</div>
-                <div style={{display:'flex',gap:8}}>
-                  <input
-                    style={{...S.inp,flex:1,borderColor:passwordError?'#dc3545':'#ffc107'}}
-                    type="password"
-                    placeholder="Enter system password..."
-                    value={passwordInput}
-                    onChange={e=>{setPasswordInput(e.target.value);setPasswordError('');}}
-                    onKeyDown={async e=>{if(e.key==='Enter')await confirmDangerousAction();}}
-                    autoFocus
-                  />
-                  <button style={{...S.btn,background:'#dc3545',color:'#fff',border:'none'}} onClick={async()=>await confirmDangerousAction()}>Confirm</button>
-                  <button style={S.btn} onClick={()=>{setPendingDangerousTool(null);setPasswordInput('');setPasswordError('');setChatMsgs(prev=>[...prev,{role:'assistant',content:'Action cancelled.'}]);}}>Cancel</button>
-                </div>
-                {passwordError&&<div style={{fontSize:11,color:'#dc3545',marginTop:5}}>{passwordError}</div>}
+          <div style={{display:'flex',gap:12,height:'calc(100vh - 120px)'}}>
+
+            {/* ── Sessions sidebar */}
+            <div style={{width:240,flexShrink:0,background:'#fff',borderRadius:12,boxShadow:'0 1px 3px rgba(0,0,0,.08)',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              <div style={{padding:'12px 14px',borderBottom:'1px solid #eee'}}>
+                <button style={{...S.btnP,width:'100%',justifyContent:'center',gap:6}} onClick={startNewChat}>✏️ New Chat</button>
               </div>
-            )}
-            <div style={{borderTop:'1px solid #eee',paddingTop:'0.75rem'}}>
-              {chatFile&&(
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,background:'#f0f7ff',borderRadius:8,padding:'6px 10px'}}>
-                  <span style={{fontSize:16}}>{chatFile.type.startsWith('image/')?'🖼️':chatFile.type==='application/pdf'?'📄':'📎'}</span>
-                  <span style={{fontSize:12,color:'#1565c0',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{chatFile.name}</span>
-                  <button style={{...S.btn,padding:'2px 7px',fontSize:11,color:'#dc3545',borderColor:'#f5c6cb'}} onClick={()=>{setChatFile(null);if(chatFileRef.current)chatFileRef.current.value='';}}>✕</button>
+              <div style={{flex:1,overflowY:'auto',padding:'8px 6px'}}>
+                {sessionsLoading&&<div style={{textAlign:'center',padding:'1rem',fontSize:12,color:'#aaa'}}>Loading...</div>}
+                {!sessionsLoading&&!chatSessions.length&&<div style={{textAlign:'center',padding:'1.5rem 1rem',fontSize:12,color:'#aaa'}}>No saved conversations yet</div>}
+                {chatSessions.map(s=>(
+                  <div key={s.id} onClick={()=>loadSession(s)} style={{display:'flex',alignItems:'flex-start',gap:6,padding:'8px 10px',borderRadius:8,cursor:'pointer',background:currentSessionId===s.id?'#f0f0f0':'transparent',marginBottom:2,transition:'background .15s'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:currentSessionId===s.id?600:400,color:'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.title||'Untitled'}</div>
+                      <div style={{fontSize:10,color:'#aaa',marginTop:2}}>{new Date(s.updated_at).toLocaleDateString()} {new Date(s.updated_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+                    </div>
+                    <button style={{...S.btn,padding:'2px 5px',fontSize:10,color:'#dc3545',borderColor:'#f5c6cb',flexShrink:0,opacity:0.6}} onClick={e=>deleteSession(s.id,e)} title="Delete">🗑</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Chat window */}
+            <div style={{...S.card,flex:1,display:'flex',flexDirection:'column',minWidth:0}}>
+              <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem',paddingBottom:'0.75rem',borderBottom:'1px solid #eee',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span>{currentSessionId?chatSessions.find(s=>s.id===currentSessionId)?.title||t.chat:t.chat}</span>
+                {currentSessionId&&<span style={{fontSize:10,color:'#aaa',fontWeight:400}}>Auto-saved</span>}
+              </div>
+              <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column',gap:12,paddingBottom:'1rem'}}>
+                {chatMsgs.map((m,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
+                    <div style={{maxWidth:'78%',padding:'10px 14px',borderRadius:12,background:m.role==='user'?'#111':'#f0f0f0',color:m.role==='user'?'#fff':'#111',fontSize:13,lineHeight:1.5,whiteSpace:'pre-wrap'}}>{m.content}</div>
+                  </div>
+                ))}
+                {chatLoading&&<div style={{display:'flex',justifyContent:'flex-start'}}><div style={{padding:'10px 14px',borderRadius:12,background:'#f0f0f0',fontSize:13,color:'#888'}}>{t.thinking}</div></div>}
+                <div ref={chatEndRef}/>
+              </div>
+              {pendingDangerousTool&&(
+                <div style={{background:'#FFF3CD',border:'1px solid #ffc107',borderRadius:10,padding:'12px 14px',marginBottom:'0.75rem'}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#856404',marginBottom:8}}>🔐 Password required to clear all stock</div>
+                  <div style={{display:'flex',gap:8}}>
+                    <input style={{...S.inp,flex:1,borderColor:passwordError?'#dc3545':'#ffc107'}} type="password" placeholder="Enter system password..." value={passwordInput} onChange={e=>{setPasswordInput(e.target.value);setPasswordError('');}} onKeyDown={async e=>{if(e.key==='Enter')await confirmDangerousAction();}} autoFocus/>
+                    <button style={{...S.btn,background:'#dc3545',color:'#fff',border:'none'}} onClick={async()=>await confirmDangerousAction()}>Confirm</button>
+                    <button style={S.btn} onClick={()=>{setPendingDangerousTool(null);setPasswordInput('');setPasswordError('');setChatMsgs(prev=>[...prev,{role:'assistant',content:'Action cancelled.'}]);}}>Cancel</button>
+                  </div>
+                  {passwordError&&<div style={{fontSize:11,color:'#dc3545',marginTop:5}}>{passwordError}</div>}
                 </div>
               )}
-              <form onSubmit={sendChat} style={{display:'flex',gap:8}}>
-                <input ref={chatFileRef} type="file" accept="image/*,.pdf,.csv,.xlsx,.xls" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)setChatFile(f);}}/>
-                <button type="button" style={{...S.btn,padding:'8px 10px',fontSize:16,flexShrink:0,color:chatFile?'#1565c0':'#888',borderColor:chatFile?'#1565c0':'#ddd'}} onClick={()=>chatFileRef.current.click()} disabled={chatLoading} title="Attach file">📎</button>
-                <input style={{...S.inp,flex:1}} value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder={chatFile?'Add a message (optional)...':t.chatPlaceholder} disabled={chatLoading}/>
-                <button type="submit" style={{...S.btnP,padding:'8px 16px'}} disabled={chatLoading||(!chatInput.trim()&&!chatFile)}>→</button>
-              </form>
+              <div style={{borderTop:'1px solid #eee',paddingTop:'0.75rem'}}>
+                {chatFile&&(
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,background:'#f0f7ff',borderRadius:8,padding:'6px 10px'}}>
+                    <span style={{fontSize:16}}>{chatFile.type.startsWith('image/')?'🖼️':chatFile.type==='application/pdf'?'📄':'📎'}</span>
+                    <span style={{fontSize:12,color:'#1565c0',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{chatFile.name}</span>
+                    <button style={{...S.btn,padding:'2px 7px',fontSize:11,color:'#dc3545',borderColor:'#f5c6cb'}} onClick={()=>{setChatFile(null);if(chatFileRef.current)chatFileRef.current.value='';}}>✕</button>
+                  </div>
+                )}
+                <form onSubmit={sendChat} style={{display:'flex',gap:8}}>
+                  <input ref={chatFileRef} type="file" accept="image/*,.pdf,.csv,.xlsx,.xls" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)setChatFile(f);}}/>
+                  <button type="button" style={{...S.btn,padding:'8px 10px',fontSize:16,flexShrink:0,color:chatFile?'#1565c0':'#888',borderColor:chatFile?'#1565c0':'#ddd'}} onClick={()=>chatFileRef.current.click()} disabled={chatLoading} title="Attach file">📎</button>
+                  <input style={{...S.inp,flex:1}} value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder={chatFile?'Add a message (optional)...':t.chatPlaceholder} disabled={chatLoading}/>
+                  <button type="submit" style={{...S.btnP,padding:'8px 16px'}} disabled={chatLoading||(!chatInput.trim()&&!chatFile)}>→</button>
+                </form>
+              </div>
             </div>
           </div>
         )}
