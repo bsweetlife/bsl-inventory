@@ -1,4 +1,4 @@
-// BSL Inventory v4.9 - resizable-columns
+// BSL Inventory v4.10 - visible-column-dividers
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -623,9 +623,15 @@ function AppMain({session}){
     window.addEventListener('mouseup',onUp);
   }
   const ResizeTh=({col,children,onClick,style})=>(
-    <th style={{...S.th,width:colWidths[col],minWidth:colWidths[col],maxWidth:colWidths[col],position:'relative',userSelect:'none',...style}} onClick={onClick}>
+    <th style={{...S.th,width:colWidths[col],minWidth:colWidths[col],maxWidth:colWidths[col],position:'relative',userSelect:'none',borderRight:'2px solid #ddd',...style}} onClick={onClick}>
       {children}
-      <span onMouseDown={e=>onResizeStart(col,e)} style={{position:'absolute',right:0,top:0,bottom:0,width:6,cursor:'col-resize',background:'transparent',zIndex:10}} onClick={e=>e.stopPropagation()}/>
+      <span
+        onMouseDown={e=>onResizeStart(col,e)}
+        onClick={e=>e.stopPropagation()}
+        style={{position:'absolute',right:-4,top:0,bottom:0,width:8,cursor:'col-resize',zIndex:10,display:'flex',alignItems:'center',justifyContent:'center'}}
+      >
+        <span style={{width:3,height:'60%',background:'#bbb',borderRadius:2,pointerEvents:'none'}}/>
+      </span>
     </th>
   );
   const ProdTable=({list})=>{
