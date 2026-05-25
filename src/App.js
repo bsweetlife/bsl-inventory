@@ -65,7 +65,7 @@ const gd=p=>{const d=(p.velocity||0)/30;return d?Math.round(p.stock/d):null};
 const fm=n=>(n!=null&&n!=='')?'$'+parseFloat(n).toFixed(2):'—';
 const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)+s.charCodeAt(i))|0;return h.toString()};
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
-const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:'',cost_notes:''});
+const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
 function readXLSX(file,cb){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];cb(null,XLSX.utils.sheet_to_json(ws,{header:1,defval:''}))}catch(err){cb(err)}};r.readAsArrayBuffer(file)}
 
@@ -143,7 +143,7 @@ function AppMain({session}){
   const[hashes,setHashes]=useState([]);
   const[customers,setCustomers]=useState([]);
   const[agentNotes,setAgentNotes]=useState([]);
-  const[globalSettings,setGlobalSettings]=useState({raw_material_waste_pct:0.005,packaging_waste_pct:0.005,filling_cost:1.15});
+  const[globalSettings,setGlobalSettings]=useState({raw_material_waste_pct:0.005,packaging_waste_pct:0.005,filling_cost:1.15,packaging_cost_default:0.45});
   const[costModal,setCostModal]=useState(null);
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null);
@@ -188,7 +188,7 @@ function AppMain({session}){
   }
 
   async function saveProduct(form){
-    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1,weight_oz:parseFloat(form.weight_oz)||0,raw_material_cost_per_oz:parseFloat(form.raw_material_cost_per_oz)||0,packaging_cost:parseFloat(form.packaging_cost)||0,box_cost:parseFloat(form.box_cost)||0,product_type:form.product_type||'finished'};
+    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1,weight_oz:parseFloat(form.weight_oz)||0,raw_material_cost_per_oz:parseFloat(form.raw_material_cost_per_oz)||0,packaging_cost:parseFloat(form.packaging_cost)||0,box_cost:parseFloat(form.box_cost)||0,jumbo_box_cost:parseFloat(form.jumbo_box_cost)||0,product_type:form.product_type||'finished'};
     delete entry.id;
     if(form.id){
       const old=prods.find(p=>p.id===form.id);
@@ -533,13 +533,15 @@ function AppMain({session}){
     const filling=gs.filling_cost||1.15;
     const rawMaterial=(p.raw_material_cost_per_oz||0)*(p.weight_oz||0);
     const rawWithWaste=rawMaterial*(1+rmWaste);
-    const pkgWithWaste=(p.packaging_cost||0)*(1+pkgWaste);
-    const box=p.box_cost||0;
-    const total=rawWithWaste+pkgWithWaste+filling+box;
+    const pkgCost=parseFloat(p.packaging_cost)||0;
+    const pkgWithWaste=pkgCost*(1+pkgWaste);
+    const box=parseFloat(p.box_cost)||0;
+    const jumboBox=parseFloat(p.jumbo_box_cost)||0;
+    const total=rawWithWaste+pkgWithWaste+filling+box+jumboBox;
     return{
       total:Math.round(total*10000)/10000,
       rawMaterial,rawWithWaste,
-      pkgWithWaste,filling,box,
+      pkgCost,pkgWithWaste,filling,box,jumboBox,
       rmWaste,pkgWaste
     };
   }
@@ -870,7 +872,7 @@ function AppMain({session}){
 
 // ── PRODUCT MODAL ─────────────────────────────────────────────
 function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
-  const[form,setForm]=useState({...{id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:''},...(mdata.form||{})});
+  const[form,setForm]=useState({...{id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_oz:'',packaging_cost:'',box_cost:'',jumbo_box_cost:''},...(mdata.form||{})});
   const isEdit=!!form.id;
   return(
     <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -908,6 +910,7 @@ function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
               {l:lang==='es'?'Costo materia prima/oz ($)':'Raw material cost/oz ($)',k:'raw_material_cost_per_oz',ph:'1.51'},
               {l:lang==='es'?'Costo empaque ($)':'Packaging cost ($)',k:'packaging_cost',ph:'0.50'},
               {l:lang==='es'?'Costo caja ($)':'Box cost ($)',k:'box_cost',ph:'0.05'},
+              {l:lang==='es'?'Costo caja jumbo ($) (opcional)':'Jumbo box cost ($) (optional)',k:'jumbo_box_cost',ph:'0.00'},
             ].map(f=>(
               <div key={f.k} style={{display:'flex',flexDirection:'column',gap:3}}>
                 <label style={{fontSize:11,color:'#888',fontWeight:500}}>{f.l}</label>
@@ -1280,7 +1283,8 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
           {row(isES?'Empaque + Merma':'Packaging + Waste', fm2(c.pkgWithWaste))}
           {row(isES?'Envasado/Sellado':'Filling/Sealing', fm2(c.filling))}
           {row(isES?'Caja':'Box cost', fm2(c.box))}
-          {row(isES?'Total Empaque':'Total Packaging', fm2(c.pkgWithWaste+c.filling+c.box), null, true)}
+          {c.jumboBox>0&&row(isES?'Caja Jumbo':'Jumbo Box cost', fm2(c.jumboBox))}
+          {row(isES?'Total Empaque':'Total Packaging', fm2(c.pkgWithWaste+c.filling+c.box+c.jumboBox), null, true)}
         </div>
 
         <div style={{background:'#111',borderRadius:10,padding:'12px 14px',marginBottom:'1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -1307,6 +1311,7 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
                 {k:'raw_material_waste_pct',l:isES?'Merma materia prima %':'Raw material waste %',mult:100},
                 {k:'packaging_waste_pct',l:isES?'Merma empaque %':'Packaging waste %',mult:100},
                 {k:'filling_cost',l:isES?'Costo envasado ($)':'Filling/sealing cost ($)',mult:1},
+                {k:'packaging_cost_default',l:isES?'Empaque default ($)':'Packaging default ($)',mult:1},
               ].map(f=>(
                 <div key={f.k} style={{display:'flex',alignItems:'center',gap:8,justifyContent:'space-between'}}>
                   <label style={{fontSize:12,color:'#555'}}>{f.l}</label>
