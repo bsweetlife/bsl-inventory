@@ -1,4 +1,4 @@
-// BSL Inventory v4.18 - fix-raw-material-label
+// BSL Inventory v4.19 - fix-raw-material-label-prod-ref
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -1548,7 +1548,7 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
         {/* Cost breakdown table */}
         <div style={{marginBottom:'1rem'}}>
           <div style={{fontSize:11,fontWeight:600,color:'#888',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:6}}>{isES?'Materia Prima':'Raw Material'}</div>
-          {row(isES?`Materia prima (${p.category||p.name.split(' ')[0]})`:`Raw material (${p.category||p.name.split(' ')[0]})`, fm2(c.rawMaterial), `$${c.pricePerOz.toFixed(4)}/oz × ${c.weightOz}oz`)}
+          {row(isES?`Materia prima (${prod.category||prod.name.split(' ')[0]})`:`Raw material (${prod.category||prod.name.split(' ')[0]})`, fm2(c.rawMaterial), `$${c.pricePerOz.toFixed(4)}/oz × ${c.weightOz}oz`)}
           {row(isES?`Merma (${pct(gs.raw_material_waste_pct)})`:`Waste (${pct(gs.raw_material_waste_pct)})`, fm2(c.rawWithWaste-c.rawMaterial))}
           {row(isES?'Costo MP + Merma':'Raw Material + Waste', fm2(c.rawWithWaste), null, true)}
         </div>
