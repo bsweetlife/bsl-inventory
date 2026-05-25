@@ -1,4 +1,4 @@
-// BSL Inventory v4.11 - chat-file-upload
+// BSL Inventory v4.12 - inventory-locations
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -145,6 +145,8 @@ function AppMain({session}){
   const[agentNotes,setAgentNotes]=useState([]);
   const[globalSettings,setGlobalSettings]=useState({raw_material_waste_pct:0.005,packaging_waste_pct:0.005,filling_cost:1.15,packaging_cost_default:0.45});
   const[costModal,setCostModal]=useState(null);
+  const[locationModal,setLocationModal]=useState(null);
+  const[locations,setLocations]=useState([]);
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null);
   const[mdata,setMdata]=useState({});
@@ -163,13 +165,14 @@ function AppMain({session}){
   async function loadAll(){
     setLoading(true);
     try{
-      const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs}]=await Promise.all([
+      const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs},{data:locs}]=await Promise.all([
         supabase.from('products').select('*').order('name'),
         supabase.from('change_log').select('*').order('created_at',{ascending:false}).limit(200),
         supabase.from('uploaded_files').select('file_hash'),
         supabase.from('customer_sales').select('*,customer_sale_items(*)').order('created_at',{ascending:false}).limit(100),
         supabase.from('agent_notes').select('*').order('created_at',{ascending:false}),
         supabase.from('global_settings').select('*'),
+        supabase.from('inventory_locations').select('*'),
       ]);
       if(p)setProds(p);
       if(l)setLog(l);
@@ -177,6 +180,7 @@ function AppMain({session}){
       if(c)setCustomers(c);
       if(n)setAgentNotes(n);
       if(gs){const s={};gs.forEach(g=>s[g.key]=parseFloat(g.value));setGlobalSettings(prev=>({...prev,...s}));}
+      if(locs)setLocations(locs);
     }catch(e){console.error(e);}
     setLoading(false);
     setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
@@ -686,7 +690,7 @@ function AppMain({session}){
                 <td style={S.td}><Badge status={st} t={t}/></td>
                 <td style={{...S.td,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
                 <td style={S.td}><code style={{fontSize:10,background:'#f5f5f5',padding:'1px 5px',borderRadius:4}}>{p.sku||'—'}</code></td>
-                <td style={{...S.td,color:p.stock<0?'#dc3545':undefined}}>{p.stock}</td>
+                <td style={{...S.td,color:p.stock<0?'#dc3545':'#111',cursor:'pointer',textDecoration:'underline',textDecorationStyle:'dotted',textDecorationColor:'#aaa'}} onClick={()=>setLocationModal(p)} title='Click to see stock by location'>{p.stock}</td>
                 <td style={{...S.td,color:st==='crit'?'#dc3545':st==='low'?'#856404':undefined}}>{dl!=null?`${dl}d`:'—'}</td>
                 <td style={{...S.td,cursor:p.product_type==='packaged'?'pointer':'default',color:p.product_type==='packaged'?'#4a90e2':undefined,textDecoration:p.product_type==='packaged'?'underline':undefined}} onClick={()=>{if(p.product_type==='packaged')setCostModal(p)}}>{fm(p.product_type==='packaged'?calcCost(p,globalSettings).total:p.cost)}{p.product_type==='packaged'&&<span style={{fontSize:9,marginLeft:3}}>📊</span>}</td>
                 <td style={S.td}>{fm(p.price)}</td>
@@ -942,6 +946,7 @@ function AppMain({session}){
       {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
       {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
       {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)} prods={prods}/>}
+      {locationModal&&<LocationModal prod={locationModal} locations={locations} S={S} lang={lang} onClose={()=>setLocationModal(null)} onSave={async(rows)=>{for(const row of rows){if(row.id){await supabase.from('inventory_locations').update({qty:row.qty,notes:row.notes}).eq('id',row.id);}else{await supabase.from('inventory_locations').insert({product_id:locationModal.id,location:row.location,qty:row.qty,notes:row.notes||''});}}await loadAll();setLocationModal(null);}} onDelete={async(id)=>{await supabase.from('inventory_locations').delete().eq('id',id);await loadAll();}}/> }
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
     </div>
@@ -1414,6 +1419,92 @@ function CostBreakdownModal({prod,globalSettings,S,lang,onClose,onSaveSettings})
 
         <div style={{display:'flex',justifyContent:'flex-end'}}>
           <button style={{...S.btn,background:'#111',color:'#fff',border:'none'}} onClick={onClose}>{isES?'Cerrar':'Close'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── LOCATION MODAL ───────────────────────────────────────────
+const LOCATIONS=['Warehouse','EVI','Tripolac'];
+function LocationModal({prod,locations,S,lang,onClose,onSave,onDelete}){
+  const isES=lang==='es';
+  const prodLocs=locations.filter(l=>l.product_id===prod.id);
+  // Build editable rows: one per known location, pre-filled if exists
+  const[rows,setRows]=useState(()=>LOCATIONS.map(loc=>{
+    const existing=prodLocs.find(l=>l.location===loc);
+    return existing?{...existing}:{location:loc,qty:0,notes:'',_new:true};
+  }));
+  const[saving,setSaving]=useState(false);
+  const total=rows.reduce((a,r)=>a+(parseFloat(r.qty)||0),0);
+
+  function setRow(i,field,val){setRows(prev=>prev.map((r,ri)=>ri===i?{...r,[field]:val}:r));}
+
+  async function handleSave(){
+    setSaving(true);
+    // Only save rows that have been touched (qty>0 or have id)
+    const toSave=rows.filter(r=>!r._new||(parseFloat(r.qty)||0)>0);
+    await onSave(toSave);
+    setSaving(false);
+  }
+
+  const loc_colors={Warehouse:'#4a90e2',EVI:'#28a745',Tripolac:'#e67e22'};
+
+  return(
+    <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,.45)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#fff',borderRadius:16,padding:'1.5rem',width:460,maxWidth:'95vw',maxHeight:'90vh',overflowY:'auto'}}>
+
+        {/* Header */}
+        <div style={{marginBottom:'1.25rem'}}>
+          <div style={{fontSize:15,fontWeight:700,marginBottom:2}}>{prod.name}</div>
+          <div style={{fontSize:11,color:'#888'}}>{isES?'Stock por Ubicación':'Stock by Location'} — {prod.sku}</div>
+        </div>
+
+        {/* Location bars */}
+        <div style={{display:'flex',gap:8,marginBottom:'1.25rem'}}>
+          {rows.map((r,i)=>{
+            const pct=total>0?((parseFloat(r.qty)||0)/total*100):0;
+            return(
+              <div key={r.location} style={{flex:1,textAlign:'center'}}>
+                <div style={{fontSize:10,color:'#888',marginBottom:4,fontWeight:600,textTransform:'uppercase'}}>{r.location}</div>
+                <div style={{background:'#f0f0f0',borderRadius:6,height:6,overflow:'hidden',marginBottom:4}}>
+                  <div style={{width:pct+'%',height:'100%',background:loc_colors[r.location]||'#888',borderRadius:6,transition:'width .3s'}}/>
+                </div>
+                <div style={{fontSize:16,fontWeight:700,color:loc_colors[r.location]||'#333'}}>{parseFloat(r.qty)||0}</div>
+                <div style={{fontSize:10,color:'#aaa'}}>{pct.toFixed(0)}%</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Total */}
+        <div style={{background:'#f8f8f8',borderRadius:8,padding:'8px 12px',marginBottom:'1.25rem',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontSize:12,color:'#555',fontWeight:500}}>{isES?'Total en sistema':'Total in system'}</span>
+          <span style={{fontSize:14,fontWeight:700}}>{prod.stock} singles</span>
+        </div>
+        {total!==prod.stock&&<div style={{background:'#FFF3CD',borderRadius:8,padding:'7px 12px',marginBottom:'1rem',fontSize:12,color:'#856404'}}>⚠️ {isES?'La suma de ubicaciones':'Location sum'} ({total}) {isES?'no coincide con el stock total':'does not match total stock'} ({prod.stock})</div>}
+
+        {/* Edit rows */}
+        <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:'1.25rem'}}>
+          {rows.map((r,i)=>(
+            <div key={r.location} style={{border:`1.5px solid ${loc_colors[r.location]||'#eee'}22`,borderRadius:10,padding:'10px 12px',background:'#fafafa'}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <div style={{width:10,height:10,borderRadius:'50%',background:loc_colors[r.location]||'#888',flexShrink:0}}/>
+                <span style={{fontSize:13,fontWeight:600,flex:1}}>{r.location}</span>
+                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                  <button style={{...S.btn,padding:'2px 8px',fontSize:16,lineHeight:1}} onClick={()=>setRow(i,'qty',Math.max(0,(parseFloat(r.qty)||0)-1))}>−</button>
+                  <input style={{...S.inp,width:70,textAlign:'center',fontWeight:700,fontSize:14}} type="number" min="0" value={r.qty||0} onChange={e=>setRow(i,'qty',parseFloat(e.target.value)||0)}/>
+                  <button style={{...S.btn,padding:'2px 8px',fontSize:16,lineHeight:1}} onClick={()=>setRow(i,'qty',(parseFloat(r.qty)||0)+1)}>+</button>
+                </div>
+              </div>
+              <input style={{...S.inp,marginTop:7,fontSize:11,color:'#888'}} placeholder={isES?'Notas (opcional)':'Notes (optional)'} value={r.notes||''} onChange={e=>setRow(i,'notes',e.target.value)}/>
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button style={S.btn} onClick={onClose}>{isES?'Cancelar':'Cancel'}</button>
+          <button style={{...S.btn,background:'#111',color:'#fff',border:'none'}} onClick={handleSave} disabled={saving}>{saving?'Saving...':isES?'Guardar':'Save'}</button>
         </div>
       </div>
     </div>
