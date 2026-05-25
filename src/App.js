@@ -1,4 +1,4 @@
-// BSL Inventory v4.13 - clear-all-stock-with-password
+// BSL Inventory v4.14 - fix-clear-stock-no-double-password
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -556,7 +556,7 @@ function AppMain({session}){
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to add/remove/set stock, USE the update_stock tool — don't just say you did it. 3) Always confirm what you did after using a tool. 4) Be concise. Respond in ${lang==='es'?'Spanish':'English'}.${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to add/remove/set stock, USE the update_stock tool — don't just say you did it. 3) Always confirm what you did after using a tool. 4) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 5) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last user message content with rich content if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
