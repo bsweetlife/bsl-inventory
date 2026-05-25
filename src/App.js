@@ -1,4 +1,4 @@
-// BSL Inventory v4.15 - chat-sessions
+// BSL Inventory v4.16 - location-updates-total-stock
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -1118,7 +1118,22 @@ function AppMain({session}){
       {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
       {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
       {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)} prods={prods}/>}
-      {locationModal&&<LocationModal prod={locationModal} locations={locations} S={S} lang={lang} onClose={()=>setLocationModal(null)} onSave={async(rows)=>{for(const row of rows){if(row.id){await supabase.from('inventory_locations').update({qty:row.qty,notes:row.notes}).eq('id',row.id);}else{await supabase.from('inventory_locations').insert({product_id:locationModal.id,location:row.location,qty:row.qty,notes:row.notes||''});}}await loadAll();setLocationModal(null);}} onDelete={async(id)=>{await supabase.from('inventory_locations').delete().eq('id',id);await loadAll();}}/> }
+      {locationModal&&<LocationModal prod={locationModal} locations={locations} S={S} lang={lang} onClose={()=>setLocationModal(null)} onSave={async(rows)=>{
+  for(const row of rows){
+    if(row.id){
+      await supabase.from('inventory_locations').update({qty:row.qty,notes:row.notes,updated_at:new Date().toISOString()}).eq('id',row.id);
+    }else if((parseFloat(row.qty)||0)>0){
+      await supabase.from('inventory_locations').insert({product_id:locationModal.id,location:row.location,qty:row.qty,notes:row.notes||''});
+    }
+  }
+  // Sum all locations and update product stock
+  const totalStock=rows.reduce((a,r)=>a+(parseFloat(r.qty)||0),0);
+  const oldStock=locationModal.stock;
+  await supabase.from('products').update({stock:totalStock}).eq('id',locationModal.id);
+  await supabase.from('change_log').insert({description:`Location update: ${locationModal.name} stock set to ${totalStock} (Warehouse+EVI+Tripolac)`,qty_change:totalStock-oldStock,user_email:userEmail});
+  await loadAll();
+  setLocationModal(null);
+}} onDelete={async(id)=>{await supabase.from('inventory_locations').delete().eq('id',id);await loadAll();}}/> }
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
     </div>
