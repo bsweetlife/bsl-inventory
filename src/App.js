@@ -1,4 +1,4 @@
-// BSL Inventory v4.21 - fix-chat-reset-on-tool-call
+// BSL Inventory v4.22 - chat-textarea-autoexpand
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -990,8 +990,8 @@ function AppMain({session}){
                 <form onSubmit={sendChat} style={{display:'flex',gap:8}}>
                   <input ref={chatFileRef} type="file" accept="image/*,.pdf,.csv,.xlsx,.xls" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)setChatFile(f);}}/>
                   <button type="button" style={{...S.btn,padding:'8px 10px',fontSize:16,flexShrink:0,color:chatFile?'#1565c0':'#888',borderColor:chatFile?'#1565c0':'#ddd'}} onClick={()=>chatFileRef.current.click()} disabled={chatLoading} title="Attach file">📎</button>
-                  <input style={{...S.inp,flex:1}} value={chatInput} onChange={e=>setChatInput(e.target.value)} placeholder={chatFile?'Add a message (optional)...':t.chatPlaceholder} disabled={chatLoading}/>
-                  <button type="submit" style={{...S.btnP,padding:'8px 16px'}} disabled={chatLoading||(!chatInput.trim()&&!chatFile)}>→</button>
+                  <textarea style={{...S.inp,flex:1,resize:'none',minHeight:40,maxHeight:200,lineHeight:'1.5',padding:'8px 10px',fontFamily:'inherit',fontSize:13,overflowY:'auto'}} rows={1} value={chatInput} onChange={e=>{setChatInput(e.target.value);e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,200)+'px';}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat(e);}}} placeholder={chatFile?'Add a message (optional)...':t.chatPlaceholder} disabled={chatLoading}/>
+                  <button type="submit" style={{...S.btnP,padding:'8px 16px',alignSelf:'flex-end'}} disabled={chatLoading||(!chatInput.trim()&&!chatFile)}>→</button>
                 </form>
               </div>
             </div>
