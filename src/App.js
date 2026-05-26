@@ -1,4 +1,4 @@
-// BSL Inventory v4.25 - channel-price-popup
+// BSL Inventory v4.26 - table-fit-to-window
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -836,7 +836,7 @@ function AppMain({session}){
   );
 
   // ── PRODUCT TABLE ────────────────────────────────────────────
-  const[colWidths,setColWidths]=useState({status:70,name:220,sku:120,stock:90,days:70,cost:90,price:90,actions:80});
+  const[colWidths,setColWidths]=useState({status:60,name:240,sku:130,stock:80,days:65,cost:90,price:90,actions:75});
   const resizing=useRef(null);
   function onResizeStart(col,e){
     e.preventDefault();
@@ -857,7 +857,7 @@ function AppMain({session}){
     window.addEventListener('mouseup',onUp);
   }
   const ResizeTh=({col,children,onClick,style})=>(
-    <th style={{...S.th,width:colWidths[col],minWidth:colWidths[col],maxWidth:colWidths[col],position:'relative',userSelect:'none',borderRight:'2px solid #ddd',...style}} onClick={onClick}>
+    <th style={{...S.th,position:'relative',userSelect:'none',borderRight:'2px solid #ddd',overflow:'hidden',...style}} onClick={onClick}>
       {children}
       <span
         onMouseDown={e=>onResizeStart(col,e)}
@@ -872,9 +872,9 @@ function AppMain({session}){
     if(!list.length)return<div style={{textAlign:'center',padding:'2rem',color:'#aaa',fontSize:13}}>{tab==='alerts'?t.noAlerts:t.noProducts}</div>;
     return(
       <div style={{overflowX:'auto',border:'1px solid #eee',borderRadius:12}}>
-        <table style={{tableLayout:'fixed',width:Object.values(colWidths).reduce((a,b)=>a+b,0),borderCollapse:'collapse',fontSize:12}}>
+        <table style={{tableLayout:'fixed',width:'100%',borderCollapse:'collapse',fontSize:12}}>
           <colgroup>
-            {Object.entries(colWidths).map(([col,w])=><col key={col} style={{width:w}}/>)}
+            {(()=>{const total=Object.values(colWidths).reduce((a,b)=>a+b,0);return Object.entries(colWidths).map(([col,w])=><col key={col} style={{width:(w/total*100).toFixed(2)+'%'}}/>);})()}
           </colgroup>
           <thead><tr>
             <ResizeTh col="status" onClick={()=>toggleSort('status')}>{t.status} <span style={{color:'#4a90e2'}}>{sortIcon('status')}</span></ResizeTh>
