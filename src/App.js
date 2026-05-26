@@ -1,4 +1,4 @@
-// BSL Inventory v4.24 - bulk-update-stock-with-location
+// BSL Inventory v4.25 - channel-price-popup
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -147,6 +147,7 @@ function AppMain({session}){
   const[globalSettings,setGlobalSettings]=useState({raw_material_waste_pct:0.005,packaging_waste_pct:0.005,filling_cost:1.15,packaging_cost_default:0.45,fee_amz:0.15,fee_wmt:0.15,fee_tgt:0.15,fee_temu:0.12,fee_other:0.10});
   const[costCalcOverrides,setCostCalcOverrides]=useState({});
   const[costModal,setCostModal]=useState(null);
+  const[priceModal,setPriceModal]=useState(null);
   const[locationModal,setLocationModal]=useState(null);
   const[locations,setLocations]=useState([]);
   const[loading,setLoading]=useState(true);
@@ -207,7 +208,7 @@ function AppMain({session}){
   }
 
   async function saveProduct(form){
-    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1,weight_oz:parseFloat(form.weight_oz)||0,raw_material_cost_per_kg:parseFloat(form.raw_material_cost_per_kg)||0,packaging_cost:parseFloat(form.packaging_cost)||0,box_cost:parseFloat(form.box_cost)||0,jumbo_box_cost:parseFloat(form.jumbo_box_cost)||0,product_type:form.product_type||'finished'};
+    const entry={...form,stock:parseFloat(form.stock)||0,velocity:parseFloat(form.velocity)||0,cost:parseFloat(form.cost)||0,price:parseFloat(form.price)||0,reorder:parseFloat(form.reorder)||0,amz_pack_size:parseFloat(form.amz_pack_size)||1,wmt_pack_size:parseFloat(form.wmt_pack_size)||1,tgt_pack_size:parseFloat(form.tgt_pack_size)||1,temu_pack_size:parseFloat(form.temu_pack_size)||1,other_pack_size:parseFloat(form.other_pack_size)||1,weight_oz:parseFloat(form.weight_oz)||0,raw_material_cost_per_kg:parseFloat(form.raw_material_cost_per_kg)||0,packaging_cost:parseFloat(form.packaging_cost)||0,box_cost:parseFloat(form.box_cost)||0,jumbo_box_cost:parseFloat(form.jumbo_box_cost)||0,product_type:form.product_type||'finished',amz_sell:parseFloat(form.amz_sell)||0,wmt_sell:parseFloat(form.wmt_sell)||0,tgt_sell:parseFloat(form.tgt_sell)||0,temu_sell:parseFloat(form.temu_sell)||0,other_sell:parseFloat(form.other_sell)||0};
     delete entry.id;
     if(form.id){
       const old=prods.find(p=>p.id===form.id);
@@ -894,7 +895,7 @@ function AppMain({session}){
                 <td style={{...S.td,color:p.stock<0?'#dc3545':'#111',cursor:'pointer',textDecoration:'underline',textDecorationStyle:'dotted',textDecorationColor:'#aaa'}} onClick={()=>setLocationModal(p)} title='Click to see stock by location'>{p.stock}</td>
                 <td style={{...S.td,color:st==='crit'?'#dc3545':st==='low'?'#856404':undefined}}>{dl!=null?`${dl}d`:'—'}</td>
                 <td style={{...S.td,cursor:p.product_type==='packaged'?'pointer':'default',color:p.product_type==='packaged'?'#4a90e2':undefined,textDecoration:p.product_type==='packaged'?'underline':undefined}} onClick={()=>{if(p.product_type==='packaged')setCostModal(p)}}>{fm(p.product_type==='packaged'?calcCost(p,globalSettings).total:p.cost)}{p.product_type==='packaged'&&<span style={{fontSize:9,marginLeft:3}}>📊</span>}</td>
-                <td style={S.td}>{fm(p.price)}</td>
+                <td style={{...S.td,cursor:'pointer',color:'#4a90e2',textDecoration:'underline',textDecorationStyle:'dotted',textDecorationColor:'#aaa'}} onClick={()=>setPriceModal(p)} title='Click to see channel prices'>{fm(p.price)}</td>
                 <td style={{...S.td,whiteSpace:'nowrap'}}>
                   <button style={{...S.btn,padding:'3px 7px'}} onClick={()=>{setMdata({form:{...p}});setModal('product')}}>✏️</button>
                   <button style={{...S.btn,padding:'3px 7px',marginLeft:3,color:'#dc3545',borderColor:'#f5c6cb'}} onClick={()=>deleteProduct(p.id)}>🗑</button>
@@ -1205,8 +1206,73 @@ function AppMain({session}){
   await loadAll();
   setLocationModal(null);
 }} onDelete={async(id)=>{await supabase.from('inventory_locations').delete().eq('id',id);await loadAll();}}/> }
+      {priceModal&&<ChannelPriceModal prod={priceModal} S={S} lang={lang} onClose={()=>setPriceModal(null)} onSave={async(form)=>{await saveProduct({...priceModal,...form});setPriceModal(null);}}/> }
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
+    </div>
+  );
+}
+
+// ── CHANNEL PRICE MODAL ───────────────────────────────────────
+const CHANNEL_PRICES=[
+  {key:'price',  label:'Shopify',  color:'#96bf48', icon:'🛍️', root:true},
+  {key:'amz_sell',label:'Amazon',  color:'#FF9900', icon:'📦'},
+  {key:'wmt_sell',label:'Walmart', color:'#0071CE', icon:'🔵'},
+  {key:'tgt_sell',label:'Target',  color:'#CC0000', icon:'🎯'},
+  {key:'temu_sell',label:'Temu',   color:'#FF6533', icon:'🛒'},
+  {key:'other_sell',label:'Other', color:'#888',    icon:'🏪'},
+];
+function ChannelPriceModal({prod,S,lang,onClose,onSave}){
+  const isES=lang==='es';
+  const[form,setForm]=useState({
+    price:prod.price||0,
+    amz_sell:prod.amz_sell||0,
+    wmt_sell:prod.wmt_sell||0,
+    tgt_sell:prod.tgt_sell||0,
+    temu_sell:prod.temu_sell||0,
+    other_sell:prod.other_sell||0,
+  });
+  const[saving,setSaving]=useState(false);
+  function set(key,val){setForm(prev=>({...prev,[key]:val}));}
+
+  async function handleSave(){
+    setSaving(true);
+    await onSave(form);
+    setSaving(false);
+  }
+
+  return(
+    <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,.45)',zIndex:300,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#fff',borderRadius:16,padding:'1.5rem',width:420,maxWidth:'95vw'}}>
+        <div style={{marginBottom:'1.25rem'}}>
+          <div style={{fontSize:15,fontWeight:700}}>{prod.name}</div>
+          <div style={{fontSize:11,color:'#888',marginTop:2}}>{isES?'Precios por Canal':'Channel Prices'} — {prod.sku}</div>
+        </div>
+
+        <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:'1.25rem'}}>
+          {CHANNEL_PRICES.map(ch=>(
+            <div key={ch.key} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 12px',borderRadius:10,border:`1.5px solid ${ch.root?ch.color+'55':'#eee'}`,background:ch.root?ch.color+'08':'#fafafa'}}>
+              <span style={{fontSize:18,flexShrink:0}}>{ch.icon}</span>
+              <span style={{flex:1,fontSize:13,fontWeight:ch.root?700:500,color:ch.color}}>{ch.label}{ch.root&&<span style={{fontSize:10,color:'#888',fontWeight:400,marginLeft:6}}>(root / Shopify)</span>}</span>
+              <div style={{display:'flex',alignItems:'center',gap:4}}>
+                <span style={{fontSize:12,color:'#888'}}>$</span>
+                <input
+                  style={{...S.inp,width:90,textAlign:'right',fontWeight:ch.root?700:400,fontSize:ch.root?15:13,borderColor:ch.root?ch.color+'88':'#ddd'}}
+                  type="number" min="0" step="0.01"
+                  value={form[ch.key]||''}
+                  placeholder="0.00"
+                  onChange={e=>set(ch.key,e.target.value)}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button style={S.btn} onClick={onClose}>{isES?'Cancelar':'Cancel'}</button>
+          <button style={{...S.btn,background:'#111',color:'#fff',border:'none'}} onClick={handleSave} disabled={saving}>{saving?'Saving...':isES?'Guardar':'Save'}</button>
+        </div>
+      </div>
     </div>
   );
 }
