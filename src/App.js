@@ -1,4 +1,4 @@
-// BSL Inventory v4.22 - chat-textarea-autoexpand
+// BSL Inventory v4.23 - bulk-update-stock-tool
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -449,6 +449,30 @@ function AppMain({session}){
       }
     },
     {
+      name:'bulk_update_stock',
+      description:'Update stock for multiple products at once. Use this when the user provides a list of products with quantities — e.g. pasted inventory counts, box counts, or shipment lists. Convert boxes×units to singles before calling. Call this ONCE with the full array, do not loop with update_stock.',
+      input_schema:{
+        type:'object',
+        properties:{
+          updates:{
+            type:'array',
+            description:'Array of stock updates to apply',
+            items:{
+              type:'object',
+              properties:{
+                product_id:{type:'number',description:'Numeric ID of the product'},
+                product_name:{type:'string',description:'Name of the product'},
+                new_stock:{type:'number',description:'New stock level in singles'},
+                reason:{type:'string',description:'Brief reason e.g. "inventory count", "shipment received"'}
+              },
+              required:['product_id','product_name','new_stock','reason']
+            }
+          }
+        },
+        required:['updates']
+      }
+    },
+    {
       name:'clear_all_stock',
       description:'Set ALL products stock to 0. ONLY use this when the user explicitly asks to clear, reset, or zero out all inventory stock. This is a destructive action that requires a password confirmation from the user.',
       input_schema:{
@@ -480,6 +504,21 @@ function AppMain({session}){
       await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${field} set to ${value}`,user_email:userEmail});
       await loadAll();
       return{success:true,message:`Updated ${product_name}: ${field} = ${value}`};
+    }
+    if(toolName==='bulk_update_stock'){
+      const{updates}=toolInput;
+      if(!updates||!updates.length)return{success:false,error:'No updates provided'};
+      const results=[];
+      for(const u of updates){
+        const prod=prods.find(p=>p.id===u.product_id);
+        if(!prod){results.push(`❌ ID ${u.product_id} not found`);continue;}
+        const old_stock=prod.stock;
+        await supabase.from('products').update({stock:u.new_stock}).eq('id',u.product_id);
+        await supabase.from('change_log').insert({description:`Chat bulk update: ${u.product_name} ${old_stock}→${u.new_stock} (${u.reason})`,qty_change:u.new_stock-old_stock,user_email:userEmail});
+        results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock}`);
+      }
+      await loadAll();
+      return{success:true,message:`Bulk update complete:\n${results.join('\n')}`};
     }
     if(toolName==='clear_all_stock'){
       // This is handled via password prompt — should not reach here directly
@@ -624,7 +663,7 @@ function AppMain({session}){
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to add/remove/set stock, USE the update_stock tool — don't just say you did it. 3) Always confirm what you did after using a tool. 4) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 5) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool.${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last user message content with rich content if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
