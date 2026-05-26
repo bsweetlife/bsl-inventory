@@ -1,4 +1,4 @@
-// BSL Inventory v4.23 - bulk-update-stock-tool
+// BSL Inventory v4.24 - bulk-update-stock-with-location
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -450,7 +450,7 @@ function AppMain({session}){
     },
     {
       name:'bulk_update_stock',
-      description:'Update stock for multiple products at once. Use this when the user provides a list of products with quantities — e.g. pasted inventory counts, box counts, or shipment lists. Convert boxes×units to singles before calling. Call this ONCE with the full array, do not loop with update_stock.',
+      description:'Update stock for multiple products at once. Use this when the user provides a list of products with quantities — e.g. pasted inventory counts, box counts, or shipment lists. Convert boxes×units to singles before calling. Call this ONCE with the full array. If the user mentions a location (Warehouse, EVI, or Tripolac), include it per item so inventory_locations is also updated.',
       input_schema:{
         type:'object',
         properties:{
@@ -463,6 +463,7 @@ function AppMain({session}){
                 product_id:{type:'number',description:'Numeric ID of the product'},
                 product_name:{type:'string',description:'Name of the product'},
                 new_stock:{type:'number',description:'New stock level in singles'},
+                location:{type:'string',enum:['Warehouse','EVI','Tripolac'],description:'Which physical location this stock is at. Include if user mentioned a location.'},
                 reason:{type:'string',description:'Brief reason e.g. "inventory count", "shipment received"'}
               },
               required:['product_id','product_name','new_stock','reason']
@@ -513,9 +514,31 @@ function AppMain({session}){
         const prod=prods.find(p=>p.id===u.product_id);
         if(!prod){results.push(`❌ ID ${u.product_id} not found`);continue;}
         const old_stock=prod.stock;
+        // Update product total stock
         await supabase.from('products').update({stock:u.new_stock}).eq('id',u.product_id);
-        await supabase.from('change_log').insert({description:`Chat bulk update: ${u.product_name} ${old_stock}→${u.new_stock} (${u.reason})`,qty_change:u.new_stock-old_stock,user_email:userEmail});
-        results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock}`);
+        await supabase.from('change_log').insert({description:`Chat bulk update: ${u.product_name} ${old_stock}→${u.new_stock} (${u.reason})${u.location?' @ '+u.location:''}`,qty_change:u.new_stock-old_stock,user_email:userEmail});
+        // Update inventory_locations if location provided
+        if(u.location){
+          const LOCS=['Warehouse','EVI','Tripolac'];
+          const loc=u.location;
+          // Check if a row already exists for this product+location
+          const{data:existing}=await supabase.from('inventory_locations').select('id').eq('product_id',u.product_id).eq('location',loc).single();
+          if(existing){
+            await supabase.from('inventory_locations').update({qty:u.new_stock,updated_at:new Date().toISOString()}).eq('id',existing.id);
+          } else {
+            await supabase.from('inventory_locations').insert({product_id:u.product_id,location:loc,qty:u.new_stock,notes:''});
+          }
+          // Zero out other locations for this product so totals stay consistent
+          for(const otherLoc of LOCS.filter(l=>l!==loc)){
+            const{data:otherRow}=await supabase.from('inventory_locations').select('id').eq('product_id',u.product_id).eq('location',otherLoc).single();
+            if(otherRow){
+              await supabase.from('inventory_locations').update({qty:0,updated_at:new Date().toISOString()}).eq('id',otherRow.id);
+            }
+          }
+          results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock} @ ${loc}`);
+        } else {
+          results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock}`);
+        }
       }
       await loadAll();
       return{success:true,message:`Bulk update complete:\n${results.join('\n')}`};
@@ -663,7 +686,7 @@ function AppMain({session}){
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool.${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). If the user mentions a location (Warehouse, EVI, or Tripolac) for the whole batch, include that location on every item in the updates array. 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last user message content with rich content if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
