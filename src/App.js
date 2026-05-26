@@ -1,4 +1,4 @@
-// BSL Inventory v4.20 - advanced-cost-calculator-tab
+// BSL Inventory v4.21 - fix-chat-reset-on-tool-call
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -166,11 +166,11 @@ function AppMain({session}){
   const chatFileRef=useRef(null);
   const t=T[lang];
 
-  useEffect(()=>{loadAll();},[]);
+  useEffect(()=>{loadAll(true);},[]);
   useEffect(()=>{if(chatMsgs.length===0)setChatMsgs([{role:'assistant',content:T[lang].chatPlaceholder}]);},[lang]);
   useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:'smooth'});},[chatMsgs]);
 
-  async function loadAll(){
+  async function loadAll(isFirstLoad=false){
     setLoading(true);
     try{
       const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs},{data:locs}]=await Promise.all([
@@ -193,7 +193,10 @@ function AppMain({session}){
       loadChatSessions();
     }catch(e){console.error(e);}
     setLoading(false);
-    setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+    // Only reset chat on first page load, never during data refreshes mid-conversation
+    if(isFirstLoad){
+      setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+    }
   }
 
   async function saveGlobalSettings(gs){
