@@ -662,15 +662,29 @@ function AppMain({session}){
     let userContent=userMsg;
     let filePreview=null;
     if(fileToSend){
-      const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(fileToSend);});
+      const isCSV=fileToSend.name.toLowerCase().endsWith('.csv');
+      const isXLS=fileToSend.name.toLowerCase().match(/\.xlsx?$/);
       const isPDF=fileToSend.type==='application/pdf';
       const isImage=fileToSend.type.startsWith('image/');
-      filePreview={name:fileToSend.name,type:fileToSend.type,base64};
-      userContent=[
-        ...(isPDF?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}}]:[]),
-        ...(isImage?[{type:'image',source:{type:'base64',media_type:fileToSend.type,data:base64}}]:[]),
-        {type:'text',text:userMsg||`Please analyze this file: ${fileToSend.name}`}
-      ];
+      if(isCSV||isXLS){
+        // Parse spreadsheet and send as readable text
+        const csvText=await new Promise((res,rej)=>{
+          readXLSX(fileToSend,(err,rows)=>{
+            if(err){rej(err);return;}
+            res(rows.map(r=>r.join('\t')).join('\n'));
+          });
+        });
+        filePreview={name:fileToSend.name,type:fileToSend.type};
+        userContent=[{type:'text',text:`${userMsg||'Please analyze this file and update inventory accordingly.'}\n\n📊 File: ${fileToSend.name}\n\`\`\`\n${csvText.slice(0,8000)}\n\`\`\``}];
+      } else {
+        const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(fileToSend);});
+        filePreview={name:fileToSend.name,type:fileToSend.type,base64};
+        userContent=[
+          ...(isPDF?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}}]:[]),
+          ...(isImage?[{type:'image',source:{type:'base64',media_type:fileToSend.type,data:base64}}]:[]),
+          {type:'text',text:userMsg||`Please analyze this file: ${fileToSend.name}`}
+        ];
+      }
     }
 
     const displayMsg={role:'user',content:userMsg||(fileToSend?`📎 ${fileToSend.name}`:'')};
