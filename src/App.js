@@ -1,4 +1,4 @@
-// BSL Inventory v4.7 - cost-breakdown-kg-fix, bulk-import-new-cols
+// BSL Inventory v4.8 - inventory-value-uses-calcCost
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -518,13 +518,6 @@ function AppMain({session}){
     setChatLoading(false);
   }
 
-  // ── COMPUTED ─────────────────────────────────────────────────
-  const totalVal=prods.reduce((a,p)=>a+(p.stock*(p.cost||0)),0);
-  const lowN=prods.filter(p=>gs(p)!=='ok').length;
-  const critN=prods.filter(p=>gs(p)==='crit').length;
-  const alerts=prods.filter(p=>gs(p)!=='ok');
-  const reorderItems=prods.filter(p=>p.stock<=p.reorder&&p.reorder>0);
-
   // ── COST CALCULATOR ──────────────────────────────────────────
   const OZ_PER_KG=35.274;
   function calcCost(p,gs){
@@ -550,6 +543,13 @@ function AppMain({session}){
       rmWaste,pkgWaste,weightOz
     };
   }
+
+  // ── COMPUTED ─────────────────────────────────────────────────
+  const totalVal=prods.reduce((a,p)=>a+(p.stock*(calcCost(p,globalSettings).total||0)),0);
+  const lowN=prods.filter(p=>gs(p)!=='ok').length;
+  const critN=prods.filter(p=>gs(p)==='crit').length;
+  const alerts=prods.filter(p=>gs(p)!=='ok');
+  const reorderItems=prods.filter(p=>p.stock<=p.reorder&&p.reorder>0);
 
   // ── FILTERS ──────────────────────────────────────────────────
   const[search,setSearch]=useState('');
