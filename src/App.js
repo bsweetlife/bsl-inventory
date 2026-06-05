@@ -1,4 +1,4 @@
-// BSL Inventory v4.26 - table-fit-to-window
+// BSL Inventory v4.28 - fix CSV file reading in chat
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -669,10 +669,19 @@ function AppMain({session}){
       if(isCSV||isXLS){
         // Parse spreadsheet and send as readable text
         const csvText=await new Promise((res,rej)=>{
-          readXLSX(fileToSend,(err,rows)=>{
-            if(err){rej(err);return;}
-            res(rows.map(r=>r.join('\t')).join('\n'));
-          });
+          if(isCSV){
+            // CSV: read as plain text directly
+            const r=new FileReader();
+            r.onload=()=>res(r.result);
+            r.onerror=()=>rej(new Error('Failed to read CSV'));
+            r.readAsText(fileToSend);
+          } else {
+            // XLSX/XLS: parse with SheetJS
+            readXLSX(fileToSend,(err,rows)=>{
+              if(err){rej(err);return;}
+              res(rows.map(r=>r.join('\t')).join('\n'));
+            });
+          }
         });
         filePreview={name:fileToSend.name,type:fileToSend.type};
         userContent=[{type:'text',text:`${userMsg||'Please analyze this file and update inventory accordingly.'}\n\n📊 File: ${fileToSend.name}\n\`\`\`\n${csvText.slice(0,8000)}\n\`\`\``}];
