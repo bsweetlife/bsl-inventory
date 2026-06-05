@@ -1,4 +1,4 @@
-// BSL Inventory v4.28 - fix CSV file reading in chat
+// BSL Inventory v4.29 - version badge in nav + version history modal
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabase';
@@ -67,6 +67,22 @@ const fm2=n=>'$'+parseFloat(n||0).toFixed(4);
 const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)+s.charCodeAt(i))|0;return h.toString()};
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
+
+const APP_VERSION='v4.29';
+const CHANGELOG=[
+  {version:'v4.29',date:'2026-06-05',changes:['Version badge added to nav bar','Version history modal in settings']},
+  {version:'v4.28',date:'2026-06-05',changes:['Fixed CSV file reading in Chat with Claude (was silently failing)']},
+  {version:'v4.27',date:'2026-06-04',changes:['Chat file attachments: CSV/XLSX now parsed and sent as readable text','File preview shown in chat input area']},
+  {version:'v4.26',date:'2026-05-26',changes:['Table columns fit to window width','Improved dashboard layout']},
+  {version:'v4.25',date:'2026-05-25',changes:['Chat session sidebar with history auto-saved to Supabase','New Chat button and session management']},
+  {version:'v4.24',date:'2026-05-25',changes:['Packing list upload: photo/PDF, Claude AI extraction, editable items with checkboxes']},
+  {version:'v4.23',date:'2026-05-24',changes:['Cost breakdown modal for packaged products (raw material $/kg → oz conversion)','Finished products use simple single cost field']},
+  {version:'v4.22',date:'2026-05-23',changes:['Location modal: track stock across Warehouse, EVI, Tripolac','FBA/WFS stock excluded from warehouse tracker']},
+  {version:'v4.21',date:'2026-05-22',changes:['Channel price popup: Shopify root price + Amazon/Walmart/Target/Temu/Other','Cost calculator tab with global platform fees and per-product overrides']},
+  {version:'v4.20',date:'2026-05-21',changes:['Sales velocity auto-calculated from orders_log','Reorder suggestions report']},
+  {version:'v4.10',date:'2026-05-20',changes:['Daily order uploads for Amazon, Walmart, Target, Temu with pack-size-to-singles conversion','Bulk CSV/XLSX import with SKU template']},
+  {version:'v4.00',date:'2026-05-19',changes:['Supabase Auth login for Eduardo and boss','Change log with user email tracking','English/Spanish toggle','Agent notes (permanent Claude memory)']},
+];
 
 function readXLSX(file,cb){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];cb(null,XLSX.utils.sheet_to_json(ws,{header:1,defval:''}))}catch(err){cb(err)}};r.readAsArrayBuffer(file)}
 
@@ -149,6 +165,7 @@ function AppMain({session}){
   const[costModal,setCostModal]=useState(null);
   const[priceModal,setPriceModal]=useState(null);
   const[locationModal,setLocationModal]=useState(null);
+  const[showChangelog,setShowChangelog]=useState(false);
   const[locations,setLocations]=useState([]);
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null);
@@ -942,6 +959,7 @@ function AppMain({session}){
           ))}
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button onClick={()=>setShowChangelog(true)} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:6,color:'#ccc',fontSize:11,padding:'3px 8px',cursor:'pointer',fontFamily:'monospace',letterSpacing:'.03em'}} title="View version history">{APP_VERSION}</button>
           <button style={{...S.btn,color:'#fff',border:'1px solid rgba(255,255,255,.3)',fontSize:12}} onClick={()=>setLang(l=>l==='en'?'es':'en')}>{lang==='en'?'🇲🇽 Español':'🇺🇸 English'}</button>
           <button style={{...S.btn,color:'#aaa',border:'1px solid rgba(255,255,255,.15)',fontSize:11}} onClick={()=>supabase.auth.signOut()}>Sign out</button>
         </div>
@@ -1232,6 +1250,7 @@ function AppMain({session}){
       {priceModal&&<ChannelPriceModal prod={priceModal} S={S} lang={lang} onClose={()=>setPriceModal(null)} onSave={async(form)=>{await saveProduct({...priceModal,...form});setPriceModal(null);}}/> }
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
+      {showChangelog&&<ChangelogModal onClose={()=>setShowChangelog(false)} S={S}/>}
     </div>
   );
 }
@@ -2096,6 +2115,45 @@ function NoteModal({t,S,mdata,onSave,onClose}){
         <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:'1rem'}}>
           <button style={S.btn} onClick={onClose}>{t.cancel}</button>
           <button style={S.btnP} onClick={()=>onSave(form)}>{t.save}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CHANGELOG MODAL ────────────────────────────────────────────
+function ChangelogModal({onClose,S}){
+  const latestDate=CHANGELOG[0]?.date;
+  return(
+    <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{...S.sheet,width:560,maxHeight:'85vh',display:'flex',flexDirection:'column'}}>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1.25rem',flexShrink:0}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:700}}>📋 Version History</div>
+            <div style={{fontSize:11,color:'#888',marginTop:2}}>BSL Inventory App — current version <span style={{fontFamily:'monospace',fontWeight:700,color:'#111'}}>{APP_VERSION}</span></div>
+          </div>
+          <button style={{...S.btn,fontSize:18,padding:'4px 10px',color:'#888'}} onClick={onClose}>✕</button>
+        </div>
+        {/* Entries */}
+        <div style={{overflowY:'auto',display:'flex',flexDirection:'column',gap:12}}>
+          {CHANGELOG.map((entry,i)=>(
+            <div key={entry.version} style={{borderRadius:10,border:`1.5px solid ${i===0?'#111':'#eee'}`,padding:'12px 14px',background:i===0?'#f8f8f8':'#fff'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                <span style={{fontFamily:'monospace',fontWeight:700,fontSize:13,color:i===0?'#111':'#555'}}>{entry.version}</span>
+                {i===0&&<span style={{background:'#111',color:'#fff',fontSize:10,padding:'2px 7px',borderRadius:99,fontWeight:600}}>CURRENT</span>}
+                <span style={{fontSize:11,color:'#aaa',marginLeft:'auto'}}>{entry.date}</span>
+              </div>
+              <ul style={{margin:0,padding:'0 0 0 16px',display:'flex',flexDirection:'column',gap:3}}>
+                {entry.changes.map((c,j)=>(
+                  <li key={j} style={{fontSize:12,color:i===0?'#222':'#666',lineHeight:1.5}}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div style={{flexShrink:0,marginTop:'1rem',textAlign:'center'}}>
+          <button style={{...S.btn,background:'#111',color:'#fff',border:'none',padding:'7px 20px'}} onClick={onClose}>Close</button>
         </div>
       </div>
     </div>
