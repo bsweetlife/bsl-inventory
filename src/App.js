@@ -7,7 +7,7 @@ const T = {
   en: {
     title:'BSL Inventory',dashboard:'Dashboard',chat:'Chat with Claude',customers:'Customers',reports:'Reports',notes:'Notes',
     addProduct:'+ Add Product',bulkImport:'📥 Bulk Import',uploadOrders:'📦 Upload Orders',exportCSV:'⬇ Export CSV',uploadPacking:'📸 Packing List',
-    totalProducts:'Total Products',inventoryValue:'Inventory Value',lowStock:'Low Stock',critical:'Critical',
+    totalProducts:'Total Products',inventoryValue:'Inventory Value',sellableValue:'Sellable Value',lowStock:'Low Stock',critical:'Critical',
     allProducts:'All Products',alerts:'Low Stock Alerts',channels:'By Channel',log:'Change Log',
     status:'Status',product:'Product',rootSku:'Root SKU',stock:'Stock (Singles)',days:'Days',cost:'Cost',price:'Price',totalCost:'Total Cost',totalPrice:'Total Value',actions:'Actions',
     ok:'OK',low:'Low',crit:'Critical',
@@ -32,7 +32,7 @@ const T = {
   es: {
     title:'BSL Inventario',dashboard:'Panel',chat:'Chat con Claude',customers:'Clientes',reports:'Reportes',notes:'Notas',
     addProduct:'+ Agregar Producto',bulkImport:'📥 Importar Masivo',uploadOrders:'📦 Subir Órdenes',exportCSV:'⬇ Exportar CSV',uploadPacking:'📸 Lista de Empaque',
-    totalProducts:'Total Productos',inventoryValue:'Valor Inventario',lowStock:'Stock Bajo',critical:'Crítico',
+    totalProducts:'Total Productos',inventoryValue:'Valor Inventario',sellableValue:'Valor de Venta',lowStock:'Stock Bajo',critical:'Crítico',
     allProducts:'Todos los Productos',alerts:'Alertas Stock Bajo',channels:'Por Canal',log:'Registro',
     status:'Estado',product:'Producto',rootSku:'SKU Raíz',stock:'Stock (Singles)',days:'Días',cost:'Costo',price:'Precio',totalCost:'Costo Total',totalPrice:'Valor Total',actions:'Acciones',
     ok:'OK',low:'Bajo',crit:'Crítico',
@@ -68,8 +68,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.33';
+const APP_VERSION='v4.34';
 const CHANGELOG=[
+  {version:'v4.34',date:'2026-06-12',changes:['New Sellable Value dashboard card: total stock × selling price, next to cost-based Inventory Value']},
   {version:'v4.33',date:'2026-06-12',changes:['Dashboard table: new Total Cost (stock × unit cost) and Total Value (stock × price) columns, sortable and resizable, in English and Spanish']},
   {version:'v4.32',date:'2026-06-12',changes:['New transfer_stock chat tool: move units between Warehouse/EVI/Tripolac without touching total stock','Fixed stale stock reads: chat tools now fetch current stock from DB at execution time (chained updates on the same product computed wrong deltas and could lose location quantities)','Transfer validates the source location has enough units before moving']},
   {version:'v4.31',date:'2026-06-12',changes:['Chat now ALWAYS asks which location (Warehouse/EVI/Tripolac) before any stock change — location is required on update_stock and bulk_update_stock','New location_mode: "adjust" applies the delta to one location (sales, shipments) vs "set_count" for full physical counts (sets location, zeros others)','update_stock now updates inventory_locations too — totals and locations can no longer drift apart from chat updates','Fixed: a deduction with a location could previously wipe out stock at other locations']},
@@ -938,6 +939,7 @@ function AppMain({session}){
 
   // ── COMPUTED ─────────────────────────────────────────────────
   const totalVal=prods.reduce((a,p)=>a+(p.stock*(calcCost(p,globalSettings).total||0)),0);
+  const totalSellVal=prods.reduce((a,p)=>a+((p.stock||0)*(parseFloat(p.price)||0)),0);
   const lowN=prods.filter(p=>gs(p)!=='ok').length;
   const critN=prods.filter(p=>gs(p)==='crit').length;
   const alerts=prods.filter(p=>gs(p)!=='ok');
@@ -1106,7 +1108,7 @@ function AppMain({session}){
           </div>
 
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:9,marginBottom:'1.5rem'}}>
-            {[{l:t.totalProducts,v:prods.length},{l:t.inventoryValue,v:'$'+Math.round(totalVal).toLocaleString()},{l:t.lowStock,v:lowN,a:lowN>0},{l:t.critical,v:critN,a:critN>0}].map(m=>(
+            {[{l:t.totalProducts,v:prods.length},{l:t.inventoryValue,v:'$'+Math.round(totalVal).toLocaleString()},{l:t.sellableValue,v:'$'+Math.round(totalSellVal).toLocaleString()},{l:t.lowStock,v:lowN,a:lowN>0},{l:t.critical,v:critN,a:critN>0}].map(m=>(
               <div key={m.l} style={{background:m.a?'#FFF3CD':'#fff',borderRadius:12,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
                 <div style={{fontSize:11,color:m.a?'#856404':'#888',marginBottom:4}}>{m.l}</div>
                 <div style={{fontSize:22,fontWeight:700,color:m.a?'#856404':'#111'}}>{m.v}</div>
