@@ -68,8 +68,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.29';
+const APP_VERSION='v4.30';
 const CHANGELOG=[
+  {version:'v4.30',date:'2026-06-12',changes:['Chat can now chain multiple tool calls in one message (agentic loop) — bulk cost/price updates actually write to DB','New bulk_update_fields chat tool for updating any field across many products at once','update_product_field expanded: weight_oz, raw_material_cost_per_kg, packaging_cost, box_cost, jumbo_box_cost, cost_notes, product_type','Packaged products without raw material data now fall back to flat cost (fixes $1.60 placeholder costs and wrong Inventory Value)','Supabase errors in chat tools are now reported instead of silently swallowed']},
   {version:'v4.29',date:'2026-06-05',changes:['Version badge added to nav bar','Version history modal in settings']},
   {version:'v4.28',date:'2026-06-05',changes:['Fixed CSV file reading in Chat with Claude (was silently failing)']},
   {version:'v4.27',date:'2026-06-04',changes:['Chat file attachments: CSV/XLSX now parsed and sent as readable text','File preview shown in chat input area']},
@@ -454,16 +455,40 @@ function AppMain({session}){
     },
     {
       name:'update_product_field',
-      description:'Update a specific field of a product like price, cost, velocity, reorder point, or supplier.',
+      description:'Update a specific field of ONE product like price, cost, velocity, reorder point, supplier, or cost-breakdown fields. For multiple products, use bulk_update_fields instead.',
       input_schema:{
         type:'object',
         properties:{
           product_id:{type:'number',description:'The numeric ID of the product'},
           product_name:{type:'string',description:'Name of the product'},
-          field:{type:'string',enum:['price','cost','velocity','reorder','supplier','category'],description:'Which field to update'},
+          field:{type:'string',enum:['price','cost','velocity','reorder','supplier','category','weight_oz','raw_material_cost_per_kg','packaging_cost','box_cost','jumbo_box_cost','cost_notes','product_type'],description:'Which field to update. cost = flat unit cost. For packaged products with raw material breakdown, use raw_material_cost_per_kg (price per kilogram) + weight_oz.'},
           value:{type:'string',description:'New value for the field'}
         },
         required:['product_id','product_name','field','value']
+      }
+    },
+    {
+      name:'bulk_update_fields',
+      description:'Update a field (cost, price, etc.) for MULTIPLE products in one call. Use this whenever the user provides costs, prices, or other values for more than one product — e.g. a pasted cost list. Call it ONCE with the full array. Each item can target a different field if needed.',
+      input_schema:{
+        type:'object',
+        properties:{
+          updates:{
+            type:'array',
+            description:'Array of field updates to apply',
+            items:{
+              type:'object',
+              properties:{
+                product_id:{type:'number',description:'Numeric ID of the product'},
+                product_name:{type:'string',description:'Name of the product'},
+                field:{type:'string',enum:['price','cost','velocity','reorder','supplier','category','weight_oz','raw_material_cost_per_kg','packaging_cost','box_cost','jumbo_box_cost','cost_notes','product_type'],description:'Which field to update'},
+                value:{type:'string',description:'New value for the field'}
+              },
+              required:['product_id','product_name','field','value']
+            }
+          }
+        },
+        required:['updates']
       }
     },
     {
@@ -519,10 +544,28 @@ function AppMain({session}){
       const{product_id,product_name,field,value}=toolInput;
       const update={};
       update[field]=isNaN(value)?value:parseFloat(value);
-      await supabase.from('products').update(update).eq('id',product_id);
+      const{error}=await supabase.from('products').update(update).eq('id',product_id);
+      if(error)return{success:false,error:`Failed to update ${product_name}: ${error.message}`};
       await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${field} set to ${value}`,user_email:userEmail});
       await loadAll();
       return{success:true,message:`Updated ${product_name}: ${field} = ${value}`};
+    }
+    if(toolName==='bulk_update_fields'){
+      const{updates}=toolInput;
+      if(!updates||!updates.length)return{success:false,error:'No updates provided'};
+      const results=[];
+      for(const u of updates){
+        const prod=prods.find(p=>p.id===u.product_id);
+        if(!prod){results.push(`❌ ID ${u.product_id} (${u.product_name||'?'}) not found`);continue;}
+        const update={};
+        update[u.field]=isNaN(u.value)?u.value:parseFloat(u.value);
+        const{error}=await supabase.from('products').update(update).eq('id',u.product_id);
+        if(error){results.push(`❌ ${u.product_name}: ${error.message}`);continue;}
+        await supabase.from('change_log').insert({description:`Chat update: ${u.product_name} ${u.field} set to ${u.value}`,user_email:userEmail});
+        results.push(`✅ ${u.product_name}: ${u.field} = ${u.value}`);
+      }
+      await loadAll();
+      return{success:true,message:`Bulk field update complete:\n${results.join('\n')}`};
     }
     if(toolName==='bulk_update_stock'){
       const{updates}=toolInput;
@@ -727,7 +770,7 @@ function AppMain({session}){
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). If the user mentions a location (Warehouse, EVI, or Tripolac) for the whole batch, include that location on every item in the updates array. 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool.${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). If the user mentions a location (Warehouse, EVI, or Tripolac) for the whole batch, include that location on every item in the updates array. 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last user message content with rich content if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
@@ -745,43 +788,52 @@ function AppMain({session}){
       })});
       const data=await res.json();
 
-      // Check if Claude wants to use a tool
-      const toolUseBlock=data.content?.find(b=>b.type==='tool_use');
-      const textBlock=data.content?.find(b=>b.type==='text');
+      // Check if Claude wants to use tools — agentic loop: keep executing until text-only response
+      const hasToolUse=data.content?.some(b=>b.type==='tool_use');
 
-      if(toolUseBlock){
-        // Intercept dangerous tools — require password first
-        if(toolUseBlock.name==='clear_all_stock'){
-          setChatMsgs(prev=>[...prev,{role:'assistant',content:`⚠️ This will set ALL ${prods.length} products to 0 stock. Please enter the system password to confirm.`}]);
-          setPendingDangerousTool({toolUseBlock,data,newMsgs,systemPrompt,reason:toolUseBlock.input.reason});
-          setChatLoading(false);
-          return;
-        }
-
+      if(hasToolUse){
+        let convo=[...apiMsgs];
+        let currentData=data;
+        let finalReply=null;
         // Show thinking message
         setChatMsgs(prev=>[...prev,{role:'assistant',content:`🔧 Updating inventory...`}]);
-        
-        // Execute the tool
-        const toolResult=await executeToolCall(toolUseBlock.name, toolUseBlock.input);
-        
-        // Second API call with tool result so Claude can respond
-        const msgs2=[
-          ...newMsgs.filter(m=>m.role!=='system').map(m=>({role:m.role,content:m.content})),
-          {role:'assistant',content:data.content},
-          {role:'user',content:[{type:'tool_result',tool_use_id:toolUseBlock.id,content:JSON.stringify(toolResult)}]}
-        ];
-        const res2=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-          model:'claude-sonnet-4-20250514',
-          max_tokens:500,
-          system:systemPrompt,
-          tools:inventoryTools,
-          messages:msgs2,
-        })});
-        const data2=await res2.json();
-        const finalReply=data2.content?.find(b=>b.type==='text')?.text||'Done!';
+
+        for(let iter=0;iter<10;iter++){
+          const toolBlocks=currentData.content?.filter(b=>b.type==='tool_use')||[];
+          if(!toolBlocks.length){
+            finalReply=currentData.content?.find(b=>b.type==='text')?.text||'Done!';
+            break;
+          }
+          // Intercept dangerous tools — require password first
+          const dangerous=toolBlocks.find(b=>b.name==='clear_all_stock');
+          if(dangerous){
+            setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:`⚠️ This will set ALL ${prods.length} products to 0 stock. Please enter the system password to confirm.`}]);
+            setPendingDangerousTool({toolUseBlock:dangerous,data:currentData,newMsgs:convo,systemPrompt,reason:dangerous.input.reason});
+            setChatLoading(false);
+            return;
+          }
+          // Execute ALL tool calls in this response (supports parallel tool use)
+          const toolResults=[];
+          for(const tb of toolBlocks){
+            const result=await executeToolCall(tb.name,tb.input);
+            toolResults.push({type:'tool_result',tool_use_id:tb.id,content:JSON.stringify(result)});
+          }
+          // Append assistant turn + tool results, then ask Claude to continue
+          convo=[...convo,{role:'assistant',content:currentData.content},{role:'user',content:toolResults}];
+          const resN=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            model:'claude-sonnet-4-20250514',
+            max_tokens:1000,
+            system:systemPrompt,
+            tools:inventoryTools,
+            messages:convo,
+          })});
+          currentData=await resN.json();
+        }
+        if(finalReply===null)finalReply=currentData.content?.find(b=>b.type==='text')?.text||'Done!';
         // Replace thinking message with final reply + auto-save
         setChatMsgs(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
       } else {
+        const textBlock=data.content?.find(b=>b.type==='text');
         const reply=textBlock?.text||'Sorry, I could not process that.';
         setChatMsgs(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
       }
@@ -803,6 +855,9 @@ function AppMain({session}){
     const pricePerKg=parseFloat(p.raw_material_cost_per_kg)||0;
     const pricePerOz=pricePerKg/OZ_PER_KG;
     const weightOz=parseFloat(p.weight_oz)||0;
+    // Fallback: packaged product with no raw material data yet → use flat cost field
+    // (prevents bogus filling+packaging-only costs and wrong inventory value)
+    if(pricePerKg<=0||weightOz<=0)return{total:parseFloat(p.cost)||0,breakdown:null};
     const rawMaterial=pricePerOz*weightOz;
     const rawWithWaste=rawMaterial*(1+rmWaste);
     const pkgCost=parseFloat(p.packaging_cost)||0;
