@@ -68,8 +68,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.31';
+const APP_VERSION='v4.32';
 const CHANGELOG=[
+  {version:'v4.32',date:'2026-06-12',changes:['New transfer_stock chat tool: move units between Warehouse/EVI/Tripolac without touching total stock','Fixed stale stock reads: chat tools now fetch current stock from DB at execution time (chained updates on the same product computed wrong deltas and could lose location quantities)','Transfer validates the source location has enough units before moving']},
   {version:'v4.31',date:'2026-06-12',changes:['Chat now ALWAYS asks which location (Warehouse/EVI/Tripolac) before any stock change — location is required on update_stock and bulk_update_stock','New location_mode: "adjust" applies the delta to one location (sales, shipments) vs "set_count" for full physical counts (sets location, zeros others)','update_stock now updates inventory_locations too — totals and locations can no longer drift apart from chat updates','Fixed: a deduction with a location could previously wipe out stock at other locations']},
   {version:'v4.30',date:'2026-06-12',changes:['Chat can now chain multiple tool calls in one message (agentic loop) — bulk cost/price updates actually write to DB','New bulk_update_fields chat tool for updating any field across many products at once','update_product_field expanded: weight_oz, raw_material_cost_per_kg, packaging_cost, box_cost, jumbo_box_cost, cost_notes, product_type','Packaged products without raw material data now fall back to flat cost (fixes $1.60 placeholder costs and wrong Inventory Value)','Supabase errors in chat tools are now reported instead of silently swallowed']},
   {version:'v4.29',date:'2026-06-05',changes:['Version badge added to nav bar','Version history modal in settings']},
@@ -520,6 +521,22 @@ function AppMain({session}){
       }
     },
     {
+      name:'transfer_stock',
+      description:'MOVE units of a product from one location to another (Warehouse, EVI, Tripolac). Use this whenever the user wants to move, transfer, or relocate stock between locations. Total stock does NOT change — only the location quantities. NEVER use update_stock or bulk_update_stock for transfers.',
+      input_schema:{
+        type:'object',
+        properties:{
+          product_id:{type:'number',description:'The numeric ID of the product'},
+          product_name:{type:'string',description:'Name of the product'},
+          qty:{type:'number',description:'Number of singles to move (always positive). Convert boxes×units to singles first.'},
+          from_location:{type:'string',enum:['Warehouse','EVI','Tripolac'],description:'Location the stock moves OUT of'},
+          to_location:{type:'string',enum:['Warehouse','EVI','Tripolac'],description:'Location the stock moves INTO'},
+          reason:{type:'string',description:'Brief reason e.g. "restocking warehouse", "moving to EVI for fulfillment"'}
+        },
+        required:['product_id','product_name','qty','from_location','to_location','reason']
+      }
+    },
+    {
       name:'clear_all_stock',
       description:'Set ALL products stock to 0. ONLY use this when the user explicitly asks to clear, reset, or zero out all inventory stock. This is a destructive action that requires a password confirmation from the user.',
       input_schema:{
@@ -544,12 +561,18 @@ function AppMain({session}){
     // delta<0 with no existing row: nothing to deduct from — skip
   }
 
+  // Fetch a product's CURRENT stock straight from the DB — never trust React state
+  // inside tool execution (it goes stale between chained tool calls in one message)
+  async function getFreshStock(product_id){
+    const{data}=await supabase.from('products').select('id,stock').eq('id',product_id).single();
+    return data?parseFloat(data.stock)||0:null;
+  }
+
   async function executeToolCall(toolName, toolInput){
     if(toolName==='update_stock'){
       const{product_id,product_name,new_stock,location,reason}=toolInput;
-      const prod=prods.find(p=>p.id===product_id);
-      if(!prod)return{success:false,error:`Product ID ${product_id} not found`};
-      const old_stock=prod.stock;
+      const old_stock=await getFreshStock(product_id);
+      if(old_stock===null)return{success:false,error:`Product ID ${product_id} not found`};
       const{error}=await supabase.from('products').update({stock:new_stock}).eq('id',product_id);
       if(error)return{success:false,error:`Failed to update ${product_name}: ${error.message}`};
       if(location)await adjustLocationQty(product_id,location,new_stock-old_stock);
@@ -589,9 +612,8 @@ function AppMain({session}){
       if(!updates||!updates.length)return{success:false,error:'No updates provided'};
       const results=[];
       for(const u of updates){
-        const prod=prods.find(p=>p.id===u.product_id);
-        if(!prod){results.push(`❌ ID ${u.product_id} not found`);continue;}
-        const old_stock=prod.stock;
+        const old_stock=await getFreshStock(u.product_id);
+        if(old_stock===null){results.push(`❌ ID ${u.product_id} not found`);continue;}
         // Update product total stock
         const{error}=await supabase.from('products').update({stock:u.new_stock}).eq('id',u.product_id);
         if(error){results.push(`❌ ${u.product_name}: ${error.message}`);continue;}
@@ -626,6 +648,23 @@ function AppMain({session}){
       }
       await loadAll();
       return{success:true,message:`Bulk update complete:\n${results.join('\n')}`};
+    }
+    if(toolName==='transfer_stock'){
+      const{product_id,product_name,qty,from_location,to_location,reason}=toolInput;
+      if(from_location===to_location)return{success:false,error:'from_location and to_location are the same'};
+      const moveQty=Math.abs(parseFloat(qty)||0);
+      if(moveQty<=0)return{success:false,error:'qty must be a positive number of singles'};
+      const stockCheck=await getFreshStock(product_id);
+      if(stockCheck===null)return{success:false,error:`Product ID ${product_id} not found`};
+      // Validate the source location has enough units
+      const{data:fromRow}=await supabase.from('inventory_locations').select('id,qty').eq('product_id',product_id).eq('location',from_location).single();
+      const fromQty=fromRow?parseFloat(fromRow.qty)||0:0;
+      if(fromQty<moveQty)return{success:false,error:`${from_location} only has ${fromQty} singles of ${product_name} — cannot move ${moveQty}. Ask the user how to proceed.`};
+      await adjustLocationQty(product_id,from_location,-moveQty);
+      await adjustLocationQty(product_id,to_location,moveQty);
+      await supabase.from('change_log').insert({description:`Chat transfer: ${product_name} ${moveQty} singles ${from_location}→${to_location} (${reason})`,qty_change:0,user_email:userEmail});
+      await loadAll();
+      return{success:true,message:`Transferred ${moveQty} singles of ${product_name}: ${from_location} → ${to_location}. Total stock unchanged (${stockCheck}).`};
     }
     if(toolName==='clear_all_stock'){
       // This is handled via password prompt — should not reach here directly
@@ -793,7 +832,7 @@ function AppMain({session}){
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others).${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others). 10) When the user wants to MOVE stock between locations, USE the transfer_stock tool — total stock does not change. NEVER express a transfer as stock updates.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last user message content with rich content if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
