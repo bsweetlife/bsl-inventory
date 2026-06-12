@@ -9,7 +9,7 @@ const T = {
     addProduct:'+ Add Product',bulkImport:'📥 Bulk Import',uploadOrders:'📦 Upload Orders',exportCSV:'⬇ Export CSV',uploadPacking:'📸 Packing List',
     totalProducts:'Total Products',inventoryValue:'Inventory Value',lowStock:'Low Stock',critical:'Critical',
     allProducts:'All Products',alerts:'Low Stock Alerts',channels:'By Channel',log:'Change Log',
-    status:'Status',product:'Product',rootSku:'Root SKU',stock:'Stock (Singles)',days:'Days',cost:'Cost',price:'Price',actions:'Actions',
+    status:'Status',product:'Product',rootSku:'Root SKU',stock:'Stock (Singles)',days:'Days',cost:'Cost',price:'Price',totalCost:'Total Cost',totalPrice:'Total Value',actions:'Actions',
     ok:'OK',low:'Low',crit:'Critical',
     productName:'Product name',category:'Category',monthlyS:'Monthly sales (singles)',reorder:'Reorder point (singles)',supplier:'Supplier',
     marketplaceSKUs:'Marketplace SKUs & Pack Sizes',amazonSku:'Amazon SKU',walmartSku:'Walmart SKU',targetSku:'Target SKU',temuSku:'Temu SKU',otherSku:'Other SKU',
@@ -34,7 +34,7 @@ const T = {
     addProduct:'+ Agregar Producto',bulkImport:'📥 Importar Masivo',uploadOrders:'📦 Subir Órdenes',exportCSV:'⬇ Exportar CSV',uploadPacking:'📸 Lista de Empaque',
     totalProducts:'Total Productos',inventoryValue:'Valor Inventario',lowStock:'Stock Bajo',critical:'Crítico',
     allProducts:'Todos los Productos',alerts:'Alertas Stock Bajo',channels:'Por Canal',log:'Registro',
-    status:'Estado',product:'Producto',rootSku:'SKU Raíz',stock:'Stock (Singles)',days:'Días',cost:'Costo',price:'Precio',actions:'Acciones',
+    status:'Estado',product:'Producto',rootSku:'SKU Raíz',stock:'Stock (Singles)',days:'Días',cost:'Costo',price:'Precio',totalCost:'Costo Total',totalPrice:'Valor Total',actions:'Acciones',
     ok:'OK',low:'Bajo',crit:'Crítico',
     productName:'Nombre del producto',category:'Categoría',monthlyS:'Ventas mensuales (singles)',reorder:'Punto de reorden (singles)',supplier:'Proveedor',
     marketplaceSKUs:'SKUs por Marketplace y Tamaño de Pack',amazonSku:'SKU Amazon',walmartSku:'SKU Walmart',targetSku:'SKU Target',temuSku:'SKU Temu',otherSku:'SKU Otro',
@@ -68,8 +68,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.32';
+const APP_VERSION='v4.33';
 const CHANGELOG=[
+  {version:'v4.33',date:'2026-06-12',changes:['Dashboard table: new Total Cost (stock × unit cost) and Total Value (stock × price) columns, sortable and resizable, in English and Spanish']},
   {version:'v4.32',date:'2026-06-12',changes:['New transfer_stock chat tool: move units between Warehouse/EVI/Tripolac without touching total stock','Fixed stale stock reads: chat tools now fetch current stock from DB at execution time (chained updates on the same product computed wrong deltas and could lose location quantities)','Transfer validates the source location has enough units before moving']},
   {version:'v4.31',date:'2026-06-12',changes:['Chat now ALWAYS asks which location (Warehouse/EVI/Tripolac) before any stock change — location is required on update_stock and bulk_update_stock','New location_mode: "adjust" applies the delta to one location (sales, shipments) vs "set_count" for full physical counts (sets location, zeros others)','update_stock now updates inventory_locations too — totals and locations can no longer drift apart from chat updates','Fixed: a deduction with a location could previously wipe out stock at other locations']},
   {version:'v4.30',date:'2026-06-12',changes:['Chat can now chain multiple tool calls in one message (agentic loop) — bulk cost/price updates actually write to DB','New bulk_update_fields chat tool for updating any field across many products at once','update_product_field expanded: weight_oz, raw_material_cost_per_kg, packaging_cost, box_cost, jumbo_box_cost, cost_notes, product_type','Packaged products without raw material data now fall back to flat cost (fixes $1.60 placeholder costs and wrong Inventory Value)','Supabase errors in chat tools are now reported instead of silently swallowed']},
@@ -963,6 +964,8 @@ function AppMain({session}){
     else if(sortBy==='stock'){av=a.stock||0;bv=b.stock||0;}
     else if(sortBy==='price'){av=a.price||0;bv=b.price||0;}
     else if(sortBy==='cost'){av=a.cost||0;bv=b.cost||0;}
+    else if(sortBy==='totalCost'){av=(a.stock||0)*(calcCost(a,globalSettings).total||0);bv=(b.stock||0)*(calcCost(b,globalSettings).total||0);}
+    else if(sortBy==='totalPrice'){av=(a.stock||0)*(a.price||0);bv=(b.stock||0)*(b.price||0);}
     else if(sortBy==='days'){av=gd(a)??9999;bv=gd(b)??9999;}
     else if(sortBy==='status'){av={ok:0,low:1,crit:2}[gs(a)]||0;bv={ok:0,low:1,crit:2}[gs(b)]||0;}
     else{av=a.name||'';bv=b.name||'';}
@@ -993,7 +996,7 @@ function AppMain({session}){
   );
 
   // ── PRODUCT TABLE ────────────────────────────────────────────
-  const[colWidths,setColWidths]=useState({status:60,name:240,sku:130,stock:80,days:65,cost:90,price:90,actions:75});
+  const[colWidths,setColWidths]=useState({status:60,name:240,sku:130,stock:80,days:65,cost:90,price:90,totalCost:100,totalPrice:100,actions:75});
   const resizing=useRef(null);
   function onResizeStart(col,e){
     e.preventDefault();
@@ -1041,6 +1044,8 @@ function AppMain({session}){
             <ResizeTh col="days" onClick={()=>toggleSort('days')}>{t.days} <span style={{color:'#4a90e2'}}>{sortIcon('days')}</span></ResizeTh>
             <ResizeTh col="cost" onClick={()=>toggleSort('cost')}>{t.cost} <span style={{color:'#4a90e2'}}>{sortIcon('cost')}</span></ResizeTh>
             <ResizeTh col="price" onClick={()=>toggleSort('price')}>{t.price} <span style={{color:'#4a90e2'}}>{sortIcon('price')}</span></ResizeTh>
+            <ResizeTh col="totalCost" onClick={()=>toggleSort('totalCost')}>{t.totalCost} <span style={{color:'#4a90e2'}}>{sortIcon('totalCost')}</span></ResizeTh>
+            <ResizeTh col="totalPrice" onClick={()=>toggleSort('totalPrice')}>{t.totalPrice} <span style={{color:'#4a90e2'}}>{sortIcon('totalPrice')}</span></ResizeTh>
             <ResizeTh col="actions">{t.actions}</ResizeTh>
           </tr></thead>
           <tbody>
@@ -1053,6 +1058,8 @@ function AppMain({session}){
                 <td style={{...S.td,color:st==='crit'?'#dc3545':st==='low'?'#856404':undefined}}>{dl!=null?`${dl}d`:'—'}</td>
                 <td style={{...S.td,cursor:p.product_type==='packaged'?'pointer':'default',color:p.product_type==='packaged'?'#4a90e2':undefined,textDecoration:p.product_type==='packaged'?'underline':undefined}} onClick={()=>{if(p.product_type==='packaged')setCostModal(p)}}>{fm(p.product_type==='packaged'?calcCost(p,globalSettings).total:p.cost)}{p.product_type==='packaged'&&<span style={{fontSize:9,marginLeft:3}}>📊</span>}</td>
                 <td style={{...S.td,cursor:'pointer',color:'#4a90e2',textDecoration:'underline',textDecorationStyle:'dotted',textDecorationColor:'#aaa'}} onClick={()=>setPriceModal(p)} title='Click to see channel prices'>{fm(p.price)}</td>
+                <td style={{...S.td,color:'#666'}}>{fm((p.stock||0)*(calcCost(p,globalSettings).total||0))}</td>
+                <td style={{...S.td,fontWeight:600}}>{fm((p.stock||0)*(p.price||0))}</td>
                 <td style={{...S.td,whiteSpace:'nowrap'}}>
                   <button style={{...S.btn,padding:'3px 7px'}} onClick={()=>{setMdata({form:{...p}});setModal('product')}}>✏️</button>
                   <button style={{...S.btn,padding:'3px 7px',marginLeft:3,color:'#dc3545',borderColor:'#f5c6cb'}} onClick={()=>deleteProduct(p.id)}>🗑</button>
