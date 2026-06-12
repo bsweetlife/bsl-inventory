@@ -68,8 +68,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.34';
+const APP_VERSION='v4.35';
 const CHANGELOG=[
+  {version:'v4.35',date:'2026-06-12',changes:['Removed Days column from dashboard table (velocities not yet populated) — can be restored later']},
   {version:'v4.34',date:'2026-06-12',changes:['New Sellable Value dashboard card: total stock × selling price, next to cost-based Inventory Value']},
   {version:'v4.33',date:'2026-06-12',changes:['Dashboard table: new Total Cost (stock × unit cost) and Total Value (stock × price) columns, sortable and resizable, in English and Spanish']},
   {version:'v4.32',date:'2026-06-12',changes:['New transfer_stock chat tool: move units between Warehouse/EVI/Tripolac without touching total stock','Fixed stale stock reads: chat tools now fetch current stock from DB at execution time (chained updates on the same product computed wrong deltas and could lose location quantities)','Transfer validates the source location has enough units before moving']},
@@ -968,7 +969,6 @@ function AppMain({session}){
     else if(sortBy==='cost'){av=a.cost||0;bv=b.cost||0;}
     else if(sortBy==='totalCost'){av=(a.stock||0)*(calcCost(a,globalSettings).total||0);bv=(b.stock||0)*(calcCost(b,globalSettings).total||0);}
     else if(sortBy==='totalPrice'){av=(a.stock||0)*(a.price||0);bv=(b.stock||0)*(b.price||0);}
-    else if(sortBy==='days'){av=gd(a)??9999;bv=gd(b)??9999;}
     else if(sortBy==='status'){av={ok:0,low:1,crit:2}[gs(a)]||0;bv={ok:0,low:1,crit:2}[gs(b)]||0;}
     else{av=a.name||'';bv=b.name||'';}
     if(typeof av==='string') return sortDir==='asc'?av.localeCompare(bv):bv.localeCompare(av);
@@ -998,7 +998,7 @@ function AppMain({session}){
   );
 
   // ── PRODUCT TABLE ────────────────────────────────────────────
-  const[colWidths,setColWidths]=useState({status:60,name:240,sku:130,stock:80,days:65,cost:90,price:90,totalCost:100,totalPrice:100,actions:75});
+  const[colWidths,setColWidths]=useState({status:60,name:240,sku:130,stock:80,cost:90,price:90,totalCost:100,totalPrice:100,actions:75});
   const resizing=useRef(null);
   function onResizeStart(col,e){
     e.preventDefault();
@@ -1043,7 +1043,6 @@ function AppMain({session}){
             <ResizeTh col="name" onClick={()=>toggleSort('name')}>{t.product} <span style={{color:'#4a90e2'}}>{sortIcon('name')}</span></ResizeTh>
             <ResizeTh col="sku">{t.rootSku}</ResizeTh>
             <ResizeTh col="stock" onClick={()=>toggleSort('stock')}>{t.stock} <span style={{color:'#4a90e2'}}>{sortIcon('stock')}</span></ResizeTh>
-            <ResizeTh col="days" onClick={()=>toggleSort('days')}>{t.days} <span style={{color:'#4a90e2'}}>{sortIcon('days')}</span></ResizeTh>
             <ResizeTh col="cost" onClick={()=>toggleSort('cost')}>{t.cost} <span style={{color:'#4a90e2'}}>{sortIcon('cost')}</span></ResizeTh>
             <ResizeTh col="price" onClick={()=>toggleSort('price')}>{t.price} <span style={{color:'#4a90e2'}}>{sortIcon('price')}</span></ResizeTh>
             <ResizeTh col="totalCost" onClick={()=>toggleSort('totalCost')}>{t.totalCost} <span style={{color:'#4a90e2'}}>{sortIcon('totalCost')}</span></ResizeTh>
@@ -1057,7 +1056,6 @@ function AppMain({session}){
                 <td style={{...S.td,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
                 <td style={S.td}><code style={{fontSize:10,background:'#f5f5f5',padding:'1px 5px',borderRadius:4}}>{p.sku||'—'}</code></td>
                 <td style={{...S.td,color:p.stock<0?'#dc3545':'#111',cursor:'pointer',textDecoration:'underline',textDecorationStyle:'dotted',textDecorationColor:'#aaa'}} onClick={()=>setLocationModal(p)} title='Click to see stock by location'>{p.stock}</td>
-                <td style={{...S.td,color:st==='crit'?'#dc3545':st==='low'?'#856404':undefined}}>{dl!=null?`${dl}d`:'—'}</td>
                 <td style={{...S.td,cursor:p.product_type==='packaged'?'pointer':'default',color:p.product_type==='packaged'?'#4a90e2':undefined,textDecoration:p.product_type==='packaged'?'underline':undefined}} onClick={()=>{if(p.product_type==='packaged')setCostModal(p)}}>{fm(p.product_type==='packaged'?calcCost(p,globalSettings).total:p.cost)}{p.product_type==='packaged'&&<span style={{fontSize:9,marginLeft:3}}>📊</span>}</td>
                 <td style={{...S.td,cursor:'pointer',color:'#4a90e2',textDecoration:'underline',textDecorationStyle:'dotted',textDecorationColor:'#aaa'}} onClick={()=>setPriceModal(p)} title='Click to see channel prices'>{fm(p.price)}</td>
                 <td style={{...S.td,color:'#666'}}>{fm((p.stock||0)*(calcCost(p,globalSettings).total||0))}</td>
