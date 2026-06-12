@@ -22,7 +22,7 @@ const T = {
     amazon:'Amazon',walmart:'Walmart',target:'Target',temu:'Temu',other:'Other',direct:'Direct',
     customerName:'Customer name',customerEmail:'Email (optional)',customerPhone:'Phone (optional)',
     addSale:'+ New Sale',saleDate:'Sale date',platform:'Platform',
-    addNote:'+ Add Note',noteTitle:'Title',noteContent:'Content',noteCategory:'Category',
+    addNote:'+ Add Note',editNote:'Edit Note',noteTitle:'Title',noteContent:'Content',noteCategory:'Category',
     reorderSuggestions:'Reorder Suggestions',velocityReport:'Sales Velocity',
     packingListTitle:'Upload Packing List',processing:'Processing...',
     confirmDeductions:'Confirm Deductions',applyDeductions:'✓ Apply',
@@ -47,7 +47,7 @@ const T = {
     amazon:'Amazon',walmart:'Walmart',target:'Target',temu:'Temu',other:'Otro',direct:'Directo',
     customerName:'Nombre del cliente',customerEmail:'Email (opcional)',customerPhone:'Teléfono (opcional)',
     addSale:'+ Nueva Venta',saleDate:'Fecha de venta',platform:'Plataforma',
-    addNote:'+ Agregar Nota',noteTitle:'Título',noteContent:'Contenido',noteCategory:'Categoría',
+    addNote:'+ Agregar Nota',editNote:'Editar Nota',noteTitle:'Título',noteContent:'Contenido',noteCategory:'Categoría',
     reorderSuggestions:'Sugerencias de Reorden',velocityReport:'Velocidad de Ventas',
     packingListTitle:'Subir Lista de Empaque',processing:'Procesando...',
     confirmDeductions:'Confirmar Deducciones',applyDeductions:'✓ Aplicar',
@@ -68,8 +68,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.35';
+const APP_VERSION='v4.36';
 const CHANGELOG=[
+  {version:'v4.36',date:'2026-06-12',changes:['Notes can now be edited: pencil button opens the note pre-filled in the modal','Delete note now asks for confirmation']},
   {version:'v4.35',date:'2026-06-12',changes:['Removed Days column from dashboard table (velocities not yet populated) — can be restored later']},
   {version:'v4.34',date:'2026-06-12',changes:['New Sellable Value dashboard card: total stock × selling price, next to cost-based Inventory Value']},
   {version:'v4.33',date:'2026-06-12',changes:['Dashboard table: new Total Cost (stock × unit cost) and Total Value (stock × price) columns, sortable and resizable, in English and Spanish']},
@@ -1338,7 +1339,8 @@ function AppMain({session}){
                     </div>
                     <div style={{fontSize:12,color:'#555',lineHeight:1.5}}>{n.content}</div>
                   </div>
-                  <button style={{...S.btn,padding:'3px 7px',color:'#dc3545',borderColor:'#f5c6cb',flexShrink:0}} onClick={async()=>{await supabase.from('agent_notes').delete().eq('id',n.id);await loadAll();}}>🗑</button>
+                  <button style={{...S.btn,padding:'3px 7px',flexShrink:0}} title="Edit note" onClick={()=>{setMdata({form:{id:n.id,title:n.title,content:n.content,category:n.category}});setModal('note')}}>✏️</button>
+                  <button style={{...S.btn,padding:'3px 7px',color:'#dc3545',borderColor:'#f5c6cb',flexShrink:0}} title="Delete note" onClick={async()=>{if(!window.confirm('Delete this note?'))return;await supabase.from('agent_notes').delete().eq('id',n.id);await loadAll();}}>🗑</button>
                 </div>
               ))}
             </div>
@@ -2216,7 +2218,7 @@ function NoteModal({t,S,mdata,onSave,onClose}){
   return(
     <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={S.sheet}>
-        <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>🧠 {t.addNote}</div>
+        <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>🧠 {form.id?(t.editNote||'Edit Note'):t.addNote}</div>
         <div style={{display:'flex',flexDirection:'column',gap:10}}>
           <div style={{display:'flex',flexDirection:'column',gap:3}}>
             <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.noteCategory}</label>
