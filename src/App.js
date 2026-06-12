@@ -68,8 +68,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.30';
+const APP_VERSION='v4.31';
 const CHANGELOG=[
+  {version:'v4.31',date:'2026-06-12',changes:['Chat now ALWAYS asks which location (Warehouse/EVI/Tripolac) before any stock change — location is required on update_stock and bulk_update_stock','New location_mode: "adjust" applies the delta to one location (sales, shipments) vs "set_count" for full physical counts (sets location, zeros others)','update_stock now updates inventory_locations too — totals and locations can no longer drift apart from chat updates','Fixed: a deduction with a location could previously wipe out stock at other locations']},
   {version:'v4.30',date:'2026-06-12',changes:['Chat can now chain multiple tool calls in one message (agentic loop) — bulk cost/price updates actually write to DB','New bulk_update_fields chat tool for updating any field across many products at once','update_product_field expanded: weight_oz, raw_material_cost_per_kg, packaging_cost, box_cost, jumbo_box_cost, cost_notes, product_type','Packaged products without raw material data now fall back to flat cost (fixes $1.60 placeholder costs and wrong Inventory Value)','Supabase errors in chat tools are now reported instead of silently swallowed']},
   {version:'v4.29',date:'2026-06-05',changes:['Version badge added to nav bar','Version history modal in settings']},
   {version:'v4.28',date:'2026-06-05',changes:['Fixed CSV file reading in Chat with Claude (was silently failing)']},
@@ -441,16 +442,17 @@ function AppMain({session}){
   const inventoryTools=[
     {
       name:'update_stock',
-      description:'Update the stock level of a product. Use this when the user asks to add, remove, set, or adjust stock for any product.',
+      description:'Update the stock level of ONE product. Use this when the user asks to add, remove, set, or adjust stock for any product. REQUIRES a location — if the user did not say which location, ASK them before calling this tool.',
       input_schema:{
         type:'object',
         properties:{
           product_id:{type:'number',description:'The numeric ID of the product'},
           product_name:{type:'string',description:'Name of the product for confirmation'},
-          new_stock:{type:'number',description:'The new stock level in singles after the update'},
+          new_stock:{type:'number',description:'The new TOTAL stock level in singles after the update'},
+          location:{type:'string',enum:['Warehouse','EVI','Tripolac'],description:'Which physical location the stock change happens at. NEVER guess — ask the user if not specified.'},
           reason:{type:'string',description:'Brief reason for the update e.g. "manual adjustment", "received shipment", "direct sale"'}
         },
-        required:['product_id','product_name','new_stock','reason']
+        required:['product_id','product_name','new_stock','location','reason']
       }
     },
     {
@@ -493,7 +495,7 @@ function AppMain({session}){
     },
     {
       name:'bulk_update_stock',
-      description:'Update stock for multiple products at once. Use this when the user provides a list of products with quantities — e.g. pasted inventory counts, box counts, or shipment lists. Convert boxes×units to singles before calling. Call this ONCE with the full array. If the user mentions a location (Warehouse, EVI, or Tripolac), include it per item so inventory_locations is also updated.',
+      description:'Update stock for multiple products at once. Use this when the user provides a list of products with quantities — e.g. pasted inventory counts, box counts, or shipment lists. Convert boxes×units to singles before calling. Call this ONCE with the full array. REQUIRES a location per item — if the user did not say which location, ASK them before calling. location_mode: use "adjust" for sales deductions and received shipments (the change is applied to that location only), use "set_count" ONLY for a full physical inventory count (sets that location to the value and zeros the other locations).',
       input_schema:{
         type:'object',
         properties:{
@@ -505,11 +507,12 @@ function AppMain({session}){
               properties:{
                 product_id:{type:'number',description:'Numeric ID of the product'},
                 product_name:{type:'string',description:'Name of the product'},
-                new_stock:{type:'number',description:'New stock level in singles'},
-                location:{type:'string',enum:['Warehouse','EVI','Tripolac'],description:'Which physical location this stock is at. Include if user mentioned a location.'},
-                reason:{type:'string',description:'Brief reason e.g. "inventory count", "shipment received"'}
+                new_stock:{type:'number',description:'New TOTAL stock level in singles'},
+                location:{type:'string',enum:['Warehouse','EVI','Tripolac'],description:'Which physical location this stock change happens at. NEVER guess — ask the user if not specified.'},
+                location_mode:{type:'string',enum:['adjust','set_count'],description:'"adjust" (default): apply the stock delta to this location only. "set_count": full physical count — set this location to new_stock and zero the others.'},
+                reason:{type:'string',description:'Brief reason e.g. "inventory count", "shipment received", "Walmart sales deduction"'}
               },
-              required:['product_id','product_name','new_stock','reason']
+              required:['product_id','product_name','new_stock','location','reason']
             }
           }
         },
@@ -529,16 +532,30 @@ function AppMain({session}){
     }
   ];
 
+  // Adjust one location's qty by a delta without touching other locations
+  async function adjustLocationQty(product_id,loc,delta){
+    const{data:existing}=await supabase.from('inventory_locations').select('id,qty').eq('product_id',product_id).eq('location',loc).single();
+    if(existing){
+      const newQty=Math.max(0,(parseFloat(existing.qty)||0)+delta);
+      await supabase.from('inventory_locations').update({qty:newQty,updated_at:new Date().toISOString()}).eq('id',existing.id);
+    } else if(delta>0){
+      await supabase.from('inventory_locations').insert({product_id,location:loc,qty:delta,notes:''});
+    }
+    // delta<0 with no existing row: nothing to deduct from — skip
+  }
+
   async function executeToolCall(toolName, toolInput){
     if(toolName==='update_stock'){
-      const{product_id,product_name,new_stock,reason}=toolInput;
+      const{product_id,product_name,new_stock,location,reason}=toolInput;
       const prod=prods.find(p=>p.id===product_id);
       if(!prod)return{success:false,error:`Product ID ${product_id} not found`};
       const old_stock=prod.stock;
-      await supabase.from('products').update({stock:new_stock}).eq('id',product_id);
-      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${old_stock}→${new_stock} (${reason})`,qty_change:new_stock-old_stock,user_email:userEmail});
+      const{error}=await supabase.from('products').update({stock:new_stock}).eq('id',product_id);
+      if(error)return{success:false,error:`Failed to update ${product_name}: ${error.message}`};
+      if(location)await adjustLocationQty(product_id,location,new_stock-old_stock);
+      await supabase.from('change_log').insert({description:`Chat update: ${product_name} ${old_stock}→${new_stock} (${reason})${location?' @ '+location:''}`,qty_change:new_stock-old_stock,user_email:userEmail});
       await loadAll();
-      return{success:true,message:`Updated ${product_name}: ${old_stock} → ${new_stock} singles (${reason})`};
+      return{success:true,message:`Updated ${product_name}: ${old_stock} → ${new_stock} singles (${reason})${location?' @ '+location:''}`};
     }
     if(toolName==='update_product_field'){
       const{product_id,product_name,field,value}=toolInput;
@@ -576,27 +593,33 @@ function AppMain({session}){
         if(!prod){results.push(`❌ ID ${u.product_id} not found`);continue;}
         const old_stock=prod.stock;
         // Update product total stock
-        await supabase.from('products').update({stock:u.new_stock}).eq('id',u.product_id);
-        await supabase.from('change_log').insert({description:`Chat bulk update: ${u.product_name} ${old_stock}→${u.new_stock} (${u.reason})${u.location?' @ '+u.location:''}`,qty_change:u.new_stock-old_stock,user_email:userEmail});
+        const{error}=await supabase.from('products').update({stock:u.new_stock}).eq('id',u.product_id);
+        if(error){results.push(`❌ ${u.product_name}: ${error.message}`);continue;}
+        const mode=u.location_mode||'adjust';
+        await supabase.from('change_log').insert({description:`Chat bulk update: ${u.product_name} ${old_stock}→${u.new_stock} (${u.reason})${u.location?' @ '+u.location+(mode==='set_count'?' [full count]':''):''}`,qty_change:u.new_stock-old_stock,user_email:userEmail});
         // Update inventory_locations if location provided
         if(u.location){
           const LOCS=['Warehouse','EVI','Tripolac'];
           const loc=u.location;
-          // Check if a row already exists for this product+location
-          const{data:existing}=await supabase.from('inventory_locations').select('id').eq('product_id',u.product_id).eq('location',loc).single();
-          if(existing){
-            await supabase.from('inventory_locations').update({qty:u.new_stock,updated_at:new Date().toISOString()}).eq('id',existing.id);
-          } else {
-            await supabase.from('inventory_locations').insert({product_id:u.product_id,location:loc,qty:u.new_stock,notes:''});
-          }
-          // Zero out other locations for this product so totals stay consistent
-          for(const otherLoc of LOCS.filter(l=>l!==loc)){
-            const{data:otherRow}=await supabase.from('inventory_locations').select('id').eq('product_id',u.product_id).eq('location',otherLoc).single();
-            if(otherRow){
-              await supabase.from('inventory_locations').update({qty:0,updated_at:new Date().toISOString()}).eq('id',otherRow.id);
+          if(mode==='set_count'){
+            // FULL PHYSICAL COUNT: set this location to new_stock, zero the others
+            const{data:existing}=await supabase.from('inventory_locations').select('id').eq('product_id',u.product_id).eq('location',loc).single();
+            if(existing){
+              await supabase.from('inventory_locations').update({qty:u.new_stock,updated_at:new Date().toISOString()}).eq('id',existing.id);
+            } else {
+              await supabase.from('inventory_locations').insert({product_id:u.product_id,location:loc,qty:u.new_stock,notes:''});
             }
+            for(const otherLoc of LOCS.filter(l=>l!==loc)){
+              const{data:otherRow}=await supabase.from('inventory_locations').select('id').eq('product_id',u.product_id).eq('location',otherLoc).single();
+              if(otherRow){
+                await supabase.from('inventory_locations').update({qty:0,updated_at:new Date().toISOString()}).eq('id',otherRow.id);
+              }
+            }
+          } else {
+            // ADJUST (default): apply only the delta to this location, leave others untouched
+            await adjustLocationQty(u.product_id,loc,u.new_stock-old_stock);
           }
-          results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock} @ ${loc}`);
+          results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock} @ ${loc}${mode==='set_count'?' (full count)':''}`);
         } else {
           results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock}`);
         }
@@ -770,7 +793,7 @@ function AppMain({session}){
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). If the user mentions a location (Warehouse, EVI, or Tripolac) for the whole batch, include that location on every item in the updates array. 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database.${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${lang==='es'?'Spanish':'English'}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others).${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last user message content with rich content if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
