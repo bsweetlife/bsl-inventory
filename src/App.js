@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.40';
+const APP_VERSION='v4.41';
 const CHANGELOG=[
+  {version:'v4.41',date:'2026-06-13',changes:['Fixed iOS voice readback: unlock speechSynthesis on first tap (iOS blocks autoplay audio)','Split long responses into sentences so iOS does not cut off speech mid-way','Hands-free and mic buttons now unlock audio on first interaction']},
   {version:'v4.40',date:'2026-06-13',changes:['Mobile nav: hamburger menu (☰) replaces full nav bar on iPhone — tap to open/close','Chat on mobile: full-width single column, ☰ button to open session history as overlay','Chat sidebar closes automatically after selecting a session or starting new chat','isMobile detection updates on resize']},
   {version:'v4.39',date:'2026-06-13',changes:['Mobile responsive layout — nav, tables, cards, modals all adapt to iPhone screen','PWA icon fixed: PNG instead of SVG (required for iOS home screen)','Chat session sidebar hidden on mobile to save space']},
   {version:'v4.38',date:'2026-06-13',changes:['Voice input: tap 🎤 to speak, Claude reads response back','Hands-free mode (👂): continuous voice conversation — tap to start, Claude listens again after each response','PWA: app installable on iPhone — open in Safari → Add to Home Screen','Pink flower icon for home screen']},
@@ -832,14 +833,31 @@ function AppMain({session}){
     }
   }
 
+  const speechUnlocked=useRef(false);
+  function unlockSpeech(){
+    if(speechUnlocked.current||!window.speechSynthesis)return;
+    const u=new SpeechSynthesisUtterance('');u.volume=0;
+    window.speechSynthesis.speak(u);
+    speechUnlocked.current=true;
+  }
+
   function speakText(text){
-    if(!synthRef.current)return;
-    synthRef.current.cancel();
-    const clean=text.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/#+\s/g,'').replace(/`(.+?)`/g,'$1').replace(/[✅❌🔧📦🌸🚨📊📋🚢]/g,'');
-    const utt=new SpeechSynthesisUtterance(clean.slice(0,1000));
-    utt.lang=lang==='es'?'es-MX':'en-US';
-    utt.rate=1.05;
-    synthRef.current.speak(utt);
+    if(!window.speechSynthesis)return;
+    window.speechSynthesis.cancel();
+    const clean=text.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/#+\s/g,'').replace(/`(.+?)`/g,'$1').replace(/[✅❌🔧📦🌸🚨📊📋🚢⚠️🔴🟡]/g,'');
+    // Split into sentences — iOS cuts off long single utterances
+    const sentences=(clean.match(/[^.!?\n]+[.!?\n]*/g)||[clean]).slice(0,8);
+    let i=0;
+    function next(){
+      if(i>=sentences.length)return;
+      const utt=new SpeechSynthesisUtterance(sentences[i].trim().slice(0,250));
+      utt.lang=lang==='es'?'es-MX':'en-US';
+      utt.rate=1.05;utt.volume=1;
+      utt.onend=()=>{i++;next();};
+      window.speechSynthesis.speak(utt);
+      i++;
+    }
+    next();
   }
 
   function startListening(onResult){
@@ -1346,12 +1364,11 @@ function AppMain({session}){
                         color:isListening?'#fff':handsFreeMode?'#28a745':'#888',
                         borderColor:isListening?'#dc3545':handsFreeMode?'#28a745':'#ddd',
                         animation:isListening?'pulse 1s infinite':undefined}}
-                      onMouseDown={()=>!handsFreeMode&&startListening(t=>{setChatInput(t);})}
-                      onMouseUp={()=>!handsFreeMode&&!isListening&&null}
-                      onTouchStart={e=>{e.preventDefault();if(!handsFreeMode)startListening(t=>{setChatInput(t);});}}
+                      onMouseDown={()=>{unlockSpeech();if(!handsFreeMode)startListening(t=>{setChatInput(t);});}}
+                      onTouchStart={e=>{e.preventDefault();unlockSpeech();if(!handsFreeMode)startListening(t=>{setChatInput(t);});}}
                       onClick={()=>{
                         if(isListening){stopListening();return;}
-                        if(handsFreeMode){setHandsFreeMode(false);synthRef.current?.cancel();return;}
+                        if(handsFreeMode){setHandsFreeMode(false);window.speechSynthesis?.cancel();return;}
                       }}
                     >{isListening?'⏹':'🎤'}</button>
                   )}
@@ -1363,10 +1380,11 @@ function AppMain({session}){
                         color:handsFreeMode?'#fff':'#888',
                         borderColor:handsFreeMode?'#28a745':'#ddd',fontWeight:600}}
                       onClick={()=>{
+                        unlockSpeech();
                         const next=!handsFreeMode;
                         setHandsFreeMode(next);
                         if(next)startListening(t=>sendChat({preventDefault:()=>{}},t));
-                        else{synthRef.current?.cancel();stopListening();}
+                        else{window.speechSynthesis?.cancel();stopListening();}
                       }}
                     >{handsFreeMode?'🔴 Live':'👂'}</button>
                   )}
