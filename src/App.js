@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.48';
+const APP_VERSION='v4.49';
 const CHANGELOG=[
+  {version:'v4.49',date:'2026-06-13',changes:['Voice language now always matches app toggle — Spanish mode = speaks/listens/replies in Spanish, English = English','Removed unreliable auto-detection — simpler and more predictable']},
   {version:'v4.48',date:'2026-06-13',changes:['Voice now picks native Spanish voice (es-MX, es-US, es-ES) instead of English voice reading Spanish text','Waits for voices to load before speaking — fixes first-load silence on some browsers']},
   {version:'v4.47',date:'2026-06-13',changes:['Fixed: handsFreeModeRef was never declared — caused silent crash on every 👂 button tap']},
   {version:'v4.46',date:'2026-06-13',changes:['Fixed critical bug: speakText was incrementing sentence index twice causing onDone to fire after 1 sentence','Fixed 👂 button reading stale React state — now uses ref so toggle always works','Hands-free loop now reliably restarts after every Claude response']},
@@ -852,12 +853,12 @@ function AppMain({session}){
     speechUnlocked.current=true;
   }
 
-  function speakText(text, onDone, spokenLang){
+  function speakText(text, onDone){
     if(!window.speechSynthesis)return;
     window.speechSynthesis.cancel();
     const clean=text.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/#+\s/g,'').replace(/`(.+?)`/g,'$1').replace(/[✅❌🔧📦🌸🚨📊📋🚢⚠️🔴🟡]/g,'');
     const sentences=(clean.match(/[^.!?\n]+[.!?\n]*/g)||[clean]).slice(0,6);
-    const isSpanish=spokenLang==='es'||(spokenLang==null&&lang==='es');
+    const isSpanish=lang==='es';
     const ttsLang=isSpanish?'es-MX':'en-US';
 
     // Pick best available voice for the language
@@ -907,13 +908,6 @@ function AppMain({session}){
     }
   }
 
-  function detectLang(text){
-    // Simple heuristic: count Spanish indicator words
-    const esWords=/\b(el|la|los|las|de|que|en|es|un|una|con|por|para|qué|cómo|cuánto|cuántos|tenemos|tiene|hay|stock|inventario|unidades|cajas)\b/gi;
-    const matches=text.match(esWords)||[];
-    return matches.length>=2?'es':'en';
-  }
-
   function startListening(onResult, force=false){
     if(!voiceSupported||(isListening&&!force))return;
     if(recognitionRef.current){try{recognitionRef.current.abort();}catch(e){}}
@@ -927,10 +921,8 @@ function AppMain({session}){
     rec.onstart=()=>setIsListening(true);
     rec.onresult=e=>{
       const t=e.results[0][0].transcript;
-      const detectedLang=detectLang(t);
-      detectedLangRef.current=detectedLang;
       setIsListening(false);
-      onResult(t,detectedLang);
+      onResult(t);
     };
     rec.onerror=()=>setIsListening(false);
     rec.onend=()=>setIsListening(false);
@@ -940,7 +932,7 @@ function AppMain({session}){
 
   function stopListening(){recognitionRef.current?.stop();setIsListening(false);}
 
-  async function sendChat(e,voiceText,detectedLang){
+  async function sendChat(e,voiceText){
 
 
     e.preventDefault();
@@ -1004,8 +996,8 @@ function AppMain({session}){
       const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
-      const replyLang=detectedLang==='es'?'Spanish':detectedLang==='en'?'English':lang==='es'?'Spanish':'English';
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${replyLang} — ALWAYS match the language the user spoke in. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others). 10) When the user wants to MOVE stock between locations, USE the transfer_stock tool — total stock does not change. NEVER express a transfer as stock updates.${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const replyLang=lang==='es'?'Spanish':'English';
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${replyLang}. 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others). 10) When the user wants to MOVE stock between locations, USE the transfer_stock tool — total stock does not change. NEVER express a transfer as stock updates.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last user message content with rich content if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
@@ -1067,12 +1059,12 @@ function AppMain({session}){
         if(finalReply===null)finalReply=currentData.content?.find(b=>b.type==='text')?.text||'Done!';
         // Replace thinking message with final reply + auto-save
         setChatMsgs(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
-        if(voiceText||handsFreeModeRef.current)speakText(finalReply,handsFreeModeRef.current?()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl),true):null,detectedLangRef.current);
+        if(voiceText||handsFreeModeRef.current)speakText(finalReply,handsFreeModeRef.current?()=>startListening(t=>sendChat({preventDefault:()=>{}},t),true):null);
       } else {
         const textBlock=data.content?.find(b=>b.type==='text');
         const reply=textBlock?.text||'Sorry, I could not process that.';
         setChatMsgs(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
-        if(voiceText||handsFreeModeRef.current)speakText(reply,handsFreeModeRef.current?()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl),true):null,detectedLangRef.current);
+        if(voiceText||handsFreeModeRef.current)speakText(reply,handsFreeModeRef.current?()=>startListening(t=>sendChat({preventDefault:()=>{}},t),true):null);
       }
     }catch(err){
       console.error(err);
@@ -1461,10 +1453,7 @@ function AppMain({session}){
                         }
                         setHandsFreeModeSync(true);
                         setTimeout(()=>{
-                          startListening((transcript,dl)=>{
-                            detectedLangRef.current=dl;
-                            sendChat({preventDefault:()=>{}},transcript,dl);
-                          },true);
+                          startListening(t=>sendChat({preventDefault:()=>{}},t),true);
                         },300);
                       }}
                     >{handsFreeMode?'🔴 Live':'👂'}</button>
