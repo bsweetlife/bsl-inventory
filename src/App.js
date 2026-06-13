@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.64';
+const APP_VERSION='v4.65';
 const CHANGELOG=[
+  {version:'v4.65',date:'2026-06-13',changes:['Barcode scanner: higher resolution video (1280x720), TRY_HARDER hint, decodeFromConstraints for continuous scanning','Wider scan guide box to fit EAN-13 barcodes']},
   {version:'v4.64',date:'2026-06-13',changes:['Fixed ZXing CDN URL (wrong package path) — tries unpkg then jsdelivr as fallback']},
   {version:'v4.63',date:'2026-06-13',changes:['Barcode scanner now works on iOS Safari via ZXing library (loaded from CDN) — BarcodeDetector only used as fast path on Chrome/Android','Manual code entry always available via toggle button']},
   {version:'v4.62',date:'2026-06-13',changes:['Add/Edit Product: photo upload (stored in Supabase Storage), shows thumbnail when editing','UPC field with camera barcode scanner (BarcodeDetector API) — scan EAN/UPC/QR codes directly','Manual UPC entry fallback for browsers without barcode scanning support']},
@@ -2176,14 +2177,8 @@ function BarcodeScannerModal({S,lang,onResult,onClose}){
 
     async function start(){
       try{
-        const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
-        if(stopped){stream.getTracks().forEach(tr=>tr.stop());return;}
-        streamRef.current=stream;
-        if(videoRef.current){
-          videoRef.current.srcObject=stream;
-          await videoRef.current.play();
-        }
-        setLoading(false);
+        // Request higher resolution for better barcode detection
+        const constraints={video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}};
 
         // Fast path: native BarcodeDetector (Chrome/Android)
         if('BarcodeDetector' in window){
@@ -2192,6 +2187,11 @@ function BarcodeScannerModal({S,lang,onResult,onClose}){
             detector=new window.BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code']});
           }catch(e){detector=null;}
           if(detector){
+            const stream=await navigator.mediaDevices.getUserMedia(constraints);
+            if(stopped){stream.getTracks().forEach(tr=>tr.stop());return;}
+            streamRef.current=stream;
+            if(videoRef.current){videoRef.current.srcObject=stream;await videoRef.current.play();}
+            setLoading(false);
             async function nativeLoop(){
               if(stopped||!videoRef.current)return;
               try{
@@ -2205,13 +2205,22 @@ function BarcodeScannerModal({S,lang,onResult,onClose}){
           }
         }
 
-        // Fallback: ZXing (works on Safari/iOS)
+        // Fallback: ZXing (works on Safari/iOS) — use decodeFromConstraints for continuous scanning
         const ZXing=await loadZXing();
-        const reader=new ZXing.BrowserMultiFormatReader();
+        const hints=new Map();
+        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[
+          ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,
+          ZXing.BarcodeFormat.UPC_A,ZXing.BarcodeFormat.UPC_E,
+          ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.CODE_39,
+          ZXing.BarcodeFormat.QR_CODE,
+        ]);
+        hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+        const reader=new ZXing.BrowserMultiFormatReader(hints);
         zxingReaderRef.current=reader;
-        reader.decodeFromVideoElement(videoRef.current,(result,err)=>{
+        setLoading(false);
+        await reader.decodeFromConstraints(constraints,videoRef.current,(result,err)=>{
           if(stopped)return;
-          if(result){onResult(result.getText());}
+          if(result)onResult(result.getText());
         });
       }catch(err){
         if(!stopped)setError(lang==='es'?'No se pudo acceder a la cámara: '+err.message:'Could not access camera: '+err.message);
@@ -2236,7 +2245,7 @@ function BarcodeScannerModal({S,lang,onResult,onClose}){
         ):(
           <div style={{position:'relative',borderRadius:12,overflow:'hidden',background:'#000',minHeight:loading?100:undefined}}>
             <video ref={videoRef} style={{width:'100%',height:260,objectFit:'cover'}} muted playsInline/>
-            {!loading&&<div style={{position:'absolute',top:'50%',left:'8%',right:'8%',height:60,transform:'translateY(-50%)',border:'2px solid #28a745',borderRadius:8,boxShadow:'0 0 0 9999px rgba(0,0,0,.3)'}}/>}
+            {!loading&&<div style={{position:'absolute',top:'50%',left:'5%',right:'5%',height:90,transform:'translateY(-50%)',border:'2px solid #28a745',borderRadius:8,boxShadow:'0 0 0 9999px rgba(0,0,0,.3)'}}/>}
             {loading&&<div style={{position:'absolute',top:0,left:0,right:0,bottom:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13}}>{lang==='es'?'Iniciando cámara...':'Starting camera...'}</div>}
           </div>
         )}
