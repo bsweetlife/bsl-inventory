@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.66';
+const APP_VERSION='v4.67';
 const CHANGELOG=[
+  {version:'v4.67',date:'2026-06-13',changes:['Removed emoji icons from Calculator and Purchase Orders nav labels']},
   {version:'v4.66',date:'2026-06-13',changes:['Mobile dashboard: product table replaced with card layout — name, status, stock, cost, price, total value all visible without horizontal scrolling','Product photo thumbnail shown on card if uploaded','Tap stock/cost/price on a card to open location/cost/price modals, same as desktop']},
   {version:'v4.65',date:'2026-06-13',changes:['Barcode scanner: higher resolution video (1280x720), TRY_HARDER hint, decodeFromConstraints for continuous scanning','Wider scan guide box to fit EAN-13 barcodes']},
   {version:'v4.64',date:'2026-06-13',changes:['Fixed ZXing CDN URL (wrong package path) — tries unpkg then jsdelivr as fallback']},
@@ -1333,7 +1334,7 @@ function AppMain({session}){
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',height:52,width:'100%'}}>
           <div style={{display:'flex',alignItems:'center',gap:'0.75rem'}}>
             <span style={{fontWeight:700,fontSize:16}}>{t.title}</span>
-            {!isMobile&&[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders','📦 '+(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
+            {!isMobile&&[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'Calculadora':'Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders',(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
               <button key={k} onClick={()=>setPage(k)} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:12}}>{l}</button>
             ))}
           </div>
@@ -1347,7 +1348,7 @@ function AppMain({session}){
         </div>
         {isMobile&&mobileMenuOpen&&(
           <div style={{borderTop:'1px solid rgba(255,255,255,.1)',padding:'8px 0',display:'flex',flexDirection:'column',gap:2}}>
-            {[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders','📦 '+(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
+            {[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'Calculadora':'Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders',(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
               <button key={k} onClick={()=>{setPage(k);setMobileMenuOpen(false);}} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:14,padding:'10px 12px',justifyContent:'flex-start',borderRadius:6}}>{l}</button>
             ))}
             <div style={{display:'flex',gap:8,padding:'8px 4px',borderTop:'1px solid rgba(255,255,255,.1)',marginTop:4}}>
