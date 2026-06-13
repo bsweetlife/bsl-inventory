@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.62';
+const APP_VERSION='v4.63';
 const CHANGELOG=[
+  {version:'v4.63',date:'2026-06-13',changes:['Barcode scanner now works on iOS Safari via ZXing library (loaded from CDN) — BarcodeDetector only used as fast path on Chrome/Android','Manual code entry always available via toggle button']},
   {version:'v4.62',date:'2026-06-13',changes:['Add/Edit Product: photo upload (stored in Supabase Storage), shows thumbnail when editing','UPC field with camera barcode scanner (BarcodeDetector API) — scan EAN/UPC/QR codes directly','Manual UPC entry fallback for browsers without barcode scanning support']},
   {version:'v4.61',date:'2026-06-13',changes:['Claude now has access to location breakdown (Warehouse/EVI/Tripolac) per product in every chat message']},
   {version:'v4.60',date:'2026-06-13',changes:['Fixed: setSessionId was calling itself recursively (same bug as v4.56) — caused silent crash on every chat message']},
@@ -2138,50 +2139,79 @@ function CostCalculatorPage({prods,globalSettings,calcCost,saveGlobalSettings,co
 
 // ── PRODUCT MODAL ─────────────────────────────────────────────
 // ── BARCODE SCANNER MODAL ──────────────────────────────────────
+function loadZXing(){
+  return new Promise((resolve,reject)=>{
+    if(window.ZXing){resolve(window.ZXing);return;}
+    const script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/zxing/0.20.0/index.min.js';
+    script.onload=()=>resolve(window.ZXing);
+    script.onerror=()=>reject(new Error('Failed to load barcode scanner library'));
+    document.head.appendChild(script);
+  });
+}
+
 function BarcodeScannerModal({S,lang,onResult,onClose}){
   const videoRef=useRef();
   const streamRef=useRef();
+  const zxingReaderRef=useRef();
   const[error,setError]=useState('');
-  const[supported,setSupported]=useState(true);
+  const[loading,setLoading]=useState(true);
   const[manualCode,setManualCode]=useState('');
+  const[showManual,setShowManual]=useState(false);
 
   useEffect(()=>{
-    if(!('BarcodeDetector' in window)){
-      setSupported(false);
-      return;
-    }
     let stopped=false;
-    let detector;
-    try{
-      detector=new window.BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code']});
-    }catch(e){setSupported(false);return;}
 
-    navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}})
-      .then(stream=>{
+    async function start(){
+      try{
+        const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+        if(stopped){stream.getTracks().forEach(tr=>tr.stop());return;}
         streamRef.current=stream;
         if(videoRef.current){
           videoRef.current.srcObject=stream;
-          videoRef.current.play();
+          await videoRef.current.play();
         }
-        scanLoop();
-      })
-      .catch(err=>setError(lang==='es'?'No se pudo acceder a la cámara: '+err.message:'Could not access camera: '+err.message));
+        setLoading(false);
 
-    async function scanLoop(){
-      if(stopped||!videoRef.current)return;
-      try{
-        const barcodes=await detector.detect(videoRef.current);
-        if(barcodes.length>0){
-          onResult(barcodes[0].rawValue);
-          return;
+        // Fast path: native BarcodeDetector (Chrome/Android)
+        if('BarcodeDetector' in window){
+          let detector;
+          try{
+            detector=new window.BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code']});
+          }catch(e){detector=null;}
+          if(detector){
+            async function nativeLoop(){
+              if(stopped||!videoRef.current)return;
+              try{
+                const codes=await detector.detect(videoRef.current);
+                if(codes.length>0){onResult(codes[0].rawValue);return;}
+              }catch(e){}
+              requestAnimationFrame(nativeLoop);
+            }
+            nativeLoop();
+            return;
+          }
         }
-      }catch(e){}
-      requestAnimationFrame(scanLoop);
+
+        // Fallback: ZXing (works on Safari/iOS)
+        const ZXing=await loadZXing();
+        const reader=new ZXing.BrowserMultiFormatReader();
+        zxingReaderRef.current=reader;
+        reader.decodeFromVideoElement(videoRef.current,(result,err)=>{
+          if(stopped)return;
+          if(result){onResult(result.getText());}
+        });
+      }catch(err){
+        if(!stopped)setError(lang==='es'?'No se pudo acceder a la cámara: '+err.message:'Could not access camera: '+err.message);
+        setLoading(false);
+      }
     }
+    start();
 
     return()=>{
       stopped=true;
       streamRef.current?.getTracks().forEach(tr=>tr.stop());
+      zxingReaderRef.current?.reset?.();
     };
   },[]);
 
@@ -2189,24 +2219,21 @@ function BarcodeScannerModal({S,lang,onResult,onClose}){
     <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{...S.sheet,maxWidth:420,textAlign:'center'}}>
         <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>📷 {lang==='es'?'Escanear Código de Barras':'Scan Barcode'}</div>
-        {supported?(
-          <>
-            {error?(
-              <div style={{color:'#dc3545',fontSize:13,padding:'2rem 0'}}>{error}</div>
-            ):(
-              <div style={{position:'relative',borderRadius:12,overflow:'hidden',background:'#000'}}>
-                <video ref={videoRef} style={{width:'100%',height:260,objectFit:'cover'}} muted playsInline/>
-                <div style={{position:'absolute',top:'50%',left:'10%',right:'10%',height:60,transform:'translateY(-50%)',border:'2px solid #28a745',borderRadius:8,boxShadow:'0 0 0 9999px rgba(0,0,0,.3)'}}/>
-              </div>
-            )}
-            <div style={{fontSize:11,color:'#aaa',marginTop:8}}>{lang==='es'?'Apunta la cámara al código de barras':'Point the camera at the barcode'}</div>
-          </>
+        {error?(
+          <div style={{color:'#dc3545',fontSize:13,padding:'1rem 0'}}>{error}</div>
         ):(
-          <div style={{color:'#856404',background:'#FFF3CD',borderRadius:8,padding:'12px 14px',fontSize:12,marginBottom:8}}>
-            {lang==='es'?'Tu navegador no soporta escaneo de cámara. Ingresa el código manualmente:':'Your browser does not support camera scanning. Enter the code manually:'}
+          <div style={{position:'relative',borderRadius:12,overflow:'hidden',background:'#000',minHeight:loading?100:undefined}}>
+            <video ref={videoRef} style={{width:'100%',height:260,objectFit:'cover'}} muted playsInline/>
+            {!loading&&<div style={{position:'absolute',top:'50%',left:'8%',right:'8%',height:60,transform:'translateY(-50%)',border:'2px solid #28a745',borderRadius:8,boxShadow:'0 0 0 9999px rgba(0,0,0,.3)'}}/>}
+            {loading&&<div style={{position:'absolute',top:0,left:0,right:0,bottom:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13}}>{lang==='es'?'Iniciando cámara...':'Starting camera...'}</div>}
           </div>
         )}
-        {!supported&&(
+        {!error&&<div style={{fontSize:11,color:'#aaa',marginTop:8}}>{lang==='es'?'Apunta la cámara al código de barras':'Point the camera at the barcode'}</div>}
+
+        <button type="button" style={{...S.btn,fontSize:11,marginTop:10}} onClick={()=>setShowManual(v=>!v)}>
+          {lang==='es'?'Ingresar código manualmente':'Enter code manually'}
+        </button>
+        {showManual&&(
           <div style={{display:'flex',gap:8,marginTop:8}}>
             <input style={{...S.inp,flex:1}} placeholder="012345678905" value={manualCode} onChange={e=>setManualCode(e.target.value)} autoFocus/>
             <button style={S.btnP} onClick={()=>onResult(manualCode)} disabled={!manualCode.trim()}>{lang==='es'?'Usar':'Use'}</button>
