@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.65';
+const APP_VERSION='v4.66';
 const CHANGELOG=[
+  {version:'v4.66',date:'2026-06-13',changes:['Mobile dashboard: product table replaced with card layout — name, status, stock, cost, price, total value all visible without horizontal scrolling','Product photo thumbnail shown on card if uploaded','Tap stock/cost/price on a card to open location/cost/price modals, same as desktop']},
   {version:'v4.65',date:'2026-06-13',changes:['Barcode scanner: higher resolution video (1280x720), TRY_HARDER hint, decodeFromConstraints for continuous scanning','Wider scan guide box to fit EAN-13 barcodes']},
   {version:'v4.64',date:'2026-06-13',changes:['Fixed ZXing CDN URL (wrong package path) — tries unpkg then jsdelivr as fallback']},
   {version:'v4.63',date:'2026-06-13',changes:['Barcode scanner now works on iOS Safari via ZXing library (loaded from CDN) — BarcodeDetector only used as fast path on Chrome/Android','Manual code entry always available via toggle button']},
@@ -1235,6 +1236,56 @@ function AppMain({session}){
   );
   const ProdTable=({list})=>{
     if(!list.length)return<div style={{textAlign:'center',padding:'2rem',color:'#aaa',fontSize:13}}>{tab==='alerts'?t.noAlerts:t.noProducts}</div>;
+
+    // ── Mobile: card layout ──
+    if(isMobile){
+      return(
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {list.map(p=>{
+            const st=gs(p);
+            const cost=p.product_type==='packaged'?calcCost(p,globalSettings).total:p.cost;
+            return(
+              <div key={p.id} style={{border:'1px solid #eee',borderRadius:10,padding:'10px 12px',background:'#fff'}}>
+                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,marginBottom:6}}>
+                  <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,flex:1}}>
+                    {p.photo_url&&<img src={p.photo_url} alt="" style={{width:32,height:32,objectFit:'cover',borderRadius:6,flexShrink:0}}/>}
+                    <div style={{minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</div>
+                      <code style={{fontSize:10,background:'#f5f5f5',padding:'1px 5px',borderRadius:4,color:'#888'}}>{p.sku||'—'}</code>
+                    </div>
+                  </div>
+                  <Badge status={st} t={t}/>
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,fontSize:11,marginBottom:8}}>
+                  <div onClick={()=>setLocationModal(p)} style={{cursor:'pointer'}}>
+                    <div style={{color:'#999',fontSize:10}}>{t.stock.split(' ')[0]}</div>
+                    <div style={{fontWeight:700,fontSize:14,color:p.stock<0?'#dc3545':'#111',textDecoration:'underline',textDecorationStyle:'dotted',textDecorationColor:'#ccc'}}>{p.stock}</div>
+                  </div>
+                  <div onClick={()=>{if(p.product_type==='packaged')setCostModal(p)}} style={{cursor:p.product_type==='packaged'?'pointer':'default'}}>
+                    <div style={{color:'#999',fontSize:10}}>{t.cost}</div>
+                    <div style={{fontWeight:600,color:p.product_type==='packaged'?'#4a90e2':'#111'}}>{fm(cost)}{p.product_type==='packaged'&&' 📊'}</div>
+                  </div>
+                  <div onClick={()=>setPriceModal(p)} style={{cursor:'pointer'}}>
+                    <div style={{color:'#999',fontSize:10}}>{t.price}</div>
+                    <div style={{fontWeight:600,color:'#4a90e2'}}>{fm(p.price)}</div>
+                  </div>
+                  <div>
+                    <div style={{color:'#999',fontSize:10}}>{t.totalPrice.split(' ')[0]}</div>
+                    <div style={{fontWeight:700}}>{fm((p.stock||0)*(p.price||0))}</div>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:6,borderTop:'1px solid #f5f5f5',paddingTop:8}}>
+                  <button style={{...S.btn,flex:1,fontSize:12,justifyContent:'center'}} onClick={()=>{setMdata({form:{...p}});setModal('product')}}>✏️ {t.edit}</button>
+                  <button style={{...S.btn,padding:'6px 12px',color:'#dc3545',borderColor:'#f5c6cb'}} onClick={()=>deleteProduct(p.id)}>🗑</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ── Desktop: table layout ──
     return(
       <div style={{overflowX:'auto',border:'1px solid #eee',borderRadius:12}}>
         <table style={{tableLayout:'fixed',width:'100%',borderCollapse:'collapse',fontSize:12}}>
