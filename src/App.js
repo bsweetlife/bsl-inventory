@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.46';
+const APP_VERSION='v4.47';
 const CHANGELOG=[
+  {version:'v4.47',date:'2026-06-13',changes:['Fixed: handsFreeModeRef was never declared — caused silent crash on every 👂 button tap']},
   {version:'v4.46',date:'2026-06-13',changes:['Fixed critical bug: speakText was incrementing sentence index twice causing onDone to fire after 1 sentence','Fixed 👂 button reading stale React state — now uses ref so toggle always works','Hands-free loop now reliably restarts after every Claude response']},
   {version:'v4.45',date:'2026-06-13',changes:['Voice status bar shows current state (listening/hands-free) with Stop button','Simplified button logic: 🎤 is tap-to-speak, 👂 toggles hands-free on/off cleanly','Removed conflicting onMouseDown/onTouchStart handlers that were double-firing']},
   {version:'v4.44',date:'2026-06-13',changes:['Fixed 👂 hands-free button: 200ms delay before startListening so state settles first','startListening accepts force=true to abort stale mic session before restarting','Loop callbacks pass force=true so mic reliably reopens after each Claude response']},
@@ -245,6 +246,7 @@ function AppMain({session}){
   const synthRef=useRef(window.speechSynthesis);
   const[isListening,setIsListening]=useState(false);
   const[handsFreeMode,setHandsFreeMode]=useState(false);
+  const handsFreeModeRef=useRef(false);
   const detectedLangRef=useRef(null);
 
   const setHandsFreeModeSync=(v)=>{handsFreeModeRef.current=v;setHandsFreeMode(v);};
