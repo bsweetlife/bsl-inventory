@@ -74,10 +74,11 @@ const fm=n=>(n!=null&&n!=='')?'$'+parseFloat(n).toFixed(2):'—';
 const fm2=n=>'$'+parseFloat(n||0).toFixed(4);
 const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)+s.charCodeAt(i))|0;return h.toString()};
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
-const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
+const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.61';
+const APP_VERSION='v4.62';
 const CHANGELOG=[
+  {version:'v4.62',date:'2026-06-13',changes:['Add/Edit Product: photo upload (stored in Supabase Storage), shows thumbnail when editing','UPC field with camera barcode scanner (BarcodeDetector API) — scan EAN/UPC/QR codes directly','Manual UPC entry fallback for browsers without barcode scanning support']},
   {version:'v4.61',date:'2026-06-13',changes:['Claude now has access to location breakdown (Warehouse/EVI/Tripolac) per product in every chat message']},
   {version:'v4.60',date:'2026-06-13',changes:['Fixed: setSessionId was calling itself recursively (same bug as v4.56) — caused silent crash on every chat message']},
   {version:'v4.59',date:'2026-06-13',changes:['Fixed Thinking stuck on typed messages: apiMsgs always includes current user message even if history is empty','Guard prevents empty messages array being sent to API']},
@@ -2136,9 +2137,111 @@ function CostCalculatorPage({prods,globalSettings,calcCost,saveGlobalSettings,co
 }
 
 // ── PRODUCT MODAL ─────────────────────────────────────────────
+// ── BARCODE SCANNER MODAL ──────────────────────────────────────
+function BarcodeScannerModal({S,lang,onResult,onClose}){
+  const videoRef=useRef();
+  const streamRef=useRef();
+  const[error,setError]=useState('');
+  const[supported,setSupported]=useState(true);
+  const[manualCode,setManualCode]=useState('');
+
+  useEffect(()=>{
+    if(!('BarcodeDetector' in window)){
+      setSupported(false);
+      return;
+    }
+    let stopped=false;
+    let detector;
+    try{
+      detector=new window.BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','qr_code']});
+    }catch(e){setSupported(false);return;}
+
+    navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}})
+      .then(stream=>{
+        streamRef.current=stream;
+        if(videoRef.current){
+          videoRef.current.srcObject=stream;
+          videoRef.current.play();
+        }
+        scanLoop();
+      })
+      .catch(err=>setError(lang==='es'?'No se pudo acceder a la cámara: '+err.message:'Could not access camera: '+err.message));
+
+    async function scanLoop(){
+      if(stopped||!videoRef.current)return;
+      try{
+        const barcodes=await detector.detect(videoRef.current);
+        if(barcodes.length>0){
+          onResult(barcodes[0].rawValue);
+          return;
+        }
+      }catch(e){}
+      requestAnimationFrame(scanLoop);
+    }
+
+    return()=>{
+      stopped=true;
+      streamRef.current?.getTracks().forEach(tr=>tr.stop());
+    };
+  },[]);
+
+  return(
+    <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{...S.sheet,maxWidth:420,textAlign:'center'}}>
+        <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>📷 {lang==='es'?'Escanear Código de Barras':'Scan Barcode'}</div>
+        {supported?(
+          <>
+            {error?(
+              <div style={{color:'#dc3545',fontSize:13,padding:'2rem 0'}}>{error}</div>
+            ):(
+              <div style={{position:'relative',borderRadius:12,overflow:'hidden',background:'#000'}}>
+                <video ref={videoRef} style={{width:'100%',height:260,objectFit:'cover'}} muted playsInline/>
+                <div style={{position:'absolute',top:'50%',left:'10%',right:'10%',height:60,transform:'translateY(-50%)',border:'2px solid #28a745',borderRadius:8,boxShadow:'0 0 0 9999px rgba(0,0,0,.3)'}}/>
+              </div>
+            )}
+            <div style={{fontSize:11,color:'#aaa',marginTop:8}}>{lang==='es'?'Apunta la cámara al código de barras':'Point the camera at the barcode'}</div>
+          </>
+        ):(
+          <div style={{color:'#856404',background:'#FFF3CD',borderRadius:8,padding:'12px 14px',fontSize:12,marginBottom:8}}>
+            {lang==='es'?'Tu navegador no soporta escaneo de cámara. Ingresa el código manualmente:':'Your browser does not support camera scanning. Enter the code manually:'}
+          </div>
+        )}
+        {!supported&&(
+          <div style={{display:'flex',gap:8,marginTop:8}}>
+            <input style={{...S.inp,flex:1}} placeholder="012345678905" value={manualCode} onChange={e=>setManualCode(e.target.value)} autoFocus/>
+            <button style={S.btnP} onClick={()=>onResult(manualCode)} disabled={!manualCode.trim()}>{lang==='es'?'Usar':'Use'}</button>
+          </div>
+        )}
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:'1rem'}}>
+          <button style={S.btn} onClick={onClose}>{lang==='es'?'Cancelar':'Cancel'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
-  const[form,setForm]=useState({...{id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:''},...(mdata.form||{})});
+  const[form,setForm]=useState({...{id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:''},...(mdata.form||{})});
   const isEdit=!!form.id;
+  const[uploading,setUploading]=useState(false);
+  const[showScanner,setShowScanner]=useState(false);
+  const photoInputRef=useRef();
+
+  async function handlePhotoUpload(file){
+    if(!file)return;
+    setUploading(true);
+    try{
+      const ext=file.name.split('.').pop();
+      const path=`${form.id||'new'}_${Date.now()}.${ext}`;
+      const{error}=await supabase.storage.from('product-photos').upload(path,file,{upsert:true});
+      if(error){alert('Upload failed: '+error.message);setUploading(false);return;}
+      const{data:urlData}=supabase.storage.from('product-photos').getPublicUrl(path);
+      setForm(prev=>({...prev,photo_url:urlData.publicUrl}));
+    }catch(e){alert('Upload error: '+e.message);}
+    setUploading(false);
+  }
+
   return(
     <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={S.sheet}>
@@ -2153,6 +2256,34 @@ function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
             </label>
           ))}
         </div>
+        {/* Photo + UPC/Barcode */}
+        <div style={{gridColumn:'1/-1',display:'flex',gap:14,alignItems:'flex-start',padding:'10px 0',borderBottom:'1px solid #eee',marginBottom:4}}>
+          {/* Photo */}
+          <div style={{flexShrink:0}}>
+            <label style={{fontSize:11,color:'#888',fontWeight:500,display:'block',marginBottom:4}}>{lang==='es'?'Foto del Producto':'Product Photo'}</label>
+            <input ref={photoInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={e=>handlePhotoUpload(e.target.files[0])}/>
+            {form.photo_url?(
+              <div style={{position:'relative',width:80,height:80}}>
+                <img src={form.photo_url} alt="Product" style={{width:80,height:80,objectFit:'cover',borderRadius:8,border:'1px solid #ddd'}}/>
+                <button type="button" onClick={()=>setForm(prev=>({...prev,photo_url:''}))} style={{position:'absolute',top:-6,right:-6,background:'#dc3545',color:'#fff',border:'none',borderRadius:99,width:20,height:20,fontSize:11,cursor:'pointer',lineHeight:1}}>✕</button>
+              </div>
+            ):(
+              <button type="button" onClick={()=>photoInputRef.current.click()} disabled={uploading} style={{width:80,height:80,borderRadius:8,border:'2px dashed #ddd',background:'#fafafa',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,color:'#bbb'}}>
+                {uploading?'⏳':'📷'}
+              </button>
+            )}
+          </div>
+          {/* UPC + Barcode scanner */}
+          <div style={{flex:1,display:'flex',flexDirection:'column',gap:3}}>
+            <label style={{fontSize:11,color:'#888',fontWeight:500}}>UPC / {lang==='es'?'Código de Barras':'Barcode'}</label>
+            <div style={{display:'flex',gap:6}}>
+              <input style={{...S.inp,flex:1}} placeholder="0 12345 67890 5" value={form.upc||''} onChange={e=>setForm(prev=>({...prev,upc:e.target.value}))}/>
+              <button type="button" style={{...S.btn,padding:'6px 12px',whiteSpace:'nowrap'}} onClick={()=>setShowScanner(true)}>📷 {lang==='es'?'Escanear':'Scan'}</button>
+            </div>
+            <div style={{fontSize:10,color:'#aaa',marginTop:2}}>{lang==='es'?'Escanea el código de barras del producto para llenar el UPC automáticamente':'Scan the product barcode to auto-fill the UPC'}</div>
+          </div>
+        </div>
+        {showScanner&&<BarcodeScannerModal S={S} lang={lang} onResult={code=>{setForm(prev=>({...prev,upc:code}));setShowScanner(false);}} onClose={()=>setShowScanner(false)}/>}
       {[{l:t.productName,k:'name',full:true,ph:'Lactose Free 1.5lb'},{l:'Root SKU',k:'sku',ph:'BSL-LACT-150'},{l:t.category,k:'category',ph:'Lactose Free'},{l:`${t.stock}`,k:'stock',t:'number',ph:'0'},{l:t.monthlyS,k:'velocity',t:'number',ph:'0'},{l:`${t.price} ($)`,k:'price',t:'number',ph:'0.00'},{l:t.reorder,k:'reorder',t:'number',ph:'0'},{l:t.supplier,k:'supplier',full:true,ph:'EVI Labs'}].map(f=>(
             <div key={f.k} style={{gridColumn:f.full?'1/-1':undefined,display:'flex',flexDirection:'column',gap:3}}>
               <label style={{fontSize:11,color:'#888',fontWeight:500}}>{f.l}</label>
