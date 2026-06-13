@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.67';
+const APP_VERSION='v4.68';
 const CHANGELOG=[
+  {version:'v4.68',date:'2026-06-13',changes:['Click any product photo (card, table, or edit modal) to view it full-size in a zoom overlay','Desktop table now shows a photo thumbnail column']},
   {version:'v4.67',date:'2026-06-13',changes:['Removed emoji icons from Calculator and Purchase Orders nav labels']},
   {version:'v4.66',date:'2026-06-13',changes:['Mobile dashboard: product table replaced with card layout — name, status, stock, cost, price, total value all visible without horizontal scrolling','Product photo thumbnail shown on card if uploaded','Tap stock/cost/price on a card to open location/cost/price modals, same as desktop']},
   {version:'v4.65',date:'2026-06-13',changes:['Barcode scanner: higher resolution video (1280x720), TRY_HARDER hint, decodeFromConstraints for continuous scanning','Wider scan guide box to fit EAN-13 barcodes']},
@@ -245,6 +246,7 @@ function AppMain({session}){
   const[showChangelog,setShowChangelog]=useState(false);
   const[locations,setLocations]=useState([]);
   const[purchaseOrders,setPurchaseOrders]=useState([]);
+  const[photoZoomModal,setPhotoZoomModal]=useState(null);
   const[poModal,setPoModal]=useState(null);
   const[poReceiveModal,setPoReceiveModal]=useState(null);
   const[loading,setLoading]=useState(true);
@@ -1203,7 +1205,7 @@ function AppMain({session}){
   );
 
   // ── PRODUCT TABLE ────────────────────────────────────────────
-  const[colWidths,setColWidths]=useState({status:60,name:240,sku:130,stock:80,cost:90,price:90,totalCost:100,totalPrice:100,actions:75});
+  const[colWidths,setColWidths]=useState({photo:50,status:60,name:240,sku:130,stock:80,cost:90,price:90,totalCost:100,totalPrice:100,actions:75});
   const resizing=useRef(null);
   function onResizeStart(col,e){
     e.preventDefault();
@@ -1249,7 +1251,7 @@ function AppMain({session}){
               <div key={p.id} style={{border:'1px solid #eee',borderRadius:10,padding:'10px 12px',background:'#fff'}}>
                 <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,marginBottom:6}}>
                   <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,flex:1}}>
-                    {p.photo_url&&<img src={p.photo_url} alt="" style={{width:32,height:32,objectFit:'cover',borderRadius:6,flexShrink:0}}/>}
+                    {p.photo_url&&<img src={p.photo_url} alt="" onClick={()=>setPhotoZoomModal(p.photo_url)} style={{width:32,height:32,objectFit:'cover',borderRadius:6,flexShrink:0,cursor:'pointer'}}/>}
                     <div style={{minWidth:0}}>
                       <div style={{fontWeight:600,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.name}</div>
                       <code style={{fontSize:10,background:'#f5f5f5',padding:'1px 5px',borderRadius:4,color:'#888'}}>{p.sku||'—'}</code>
@@ -1294,6 +1296,7 @@ function AppMain({session}){
             {(()=>{const total=Object.values(colWidths).reduce((a,b)=>a+b,0);return Object.entries(colWidths).map(([col,w])=><col key={col} style={{width:(w/total*100).toFixed(2)+'%'}}/>);})()}
           </colgroup>
           <thead><tr>
+            <ResizeTh col="photo"></ResizeTh>
             <ResizeTh col="status" onClick={()=>toggleSort('status')}>{t.status} <span style={{color:'#4a90e2'}}>{sortIcon('status')}</span></ResizeTh>
             <ResizeTh col="name" onClick={()=>toggleSort('name')}>{t.product} <span style={{color:'#4a90e2'}}>{sortIcon('name')}</span></ResizeTh>
             <ResizeTh col="sku">{t.rootSku}</ResizeTh>
@@ -1307,6 +1310,7 @@ function AppMain({session}){
           <tbody>
             {list.map(p=>{const st=gs(p),dl=gd(p);return(
               <tr key={p.id}>
+                <td style={{...S.td,padding:'4px 6px'}}>{p.photo_url?<img src={p.photo_url} alt="" onClick={()=>setPhotoZoomModal(p.photo_url)} style={{width:32,height:32,objectFit:'cover',borderRadius:6,cursor:'pointer',display:'block'}}/>:<div style={{width:32,height:32}}/>}</td>
                 <td style={S.td}><Badge status={st} t={t}/></td>
                 <td style={{...S.td,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.name}>{p.name}</td>
                 <td style={S.td}><code style={{fontSize:10,background:'#f5f5f5',padding:'1px 5px',borderRadius:4}}>{p.sku||'—'}</code></td>
@@ -1775,7 +1779,7 @@ function AppMain({session}){
       </main>
 
       {/* MODALS */}
-      {modal==='product'&&<ProductModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={saveProduct} onClose={()=>setModal(null)} lang={lang}/>}
+      {modal==='product'&&<ProductModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={saveProduct} onClose={()=>setModal(null)} lang={lang} onZoomPhoto={setPhotoZoomModal}/>}
       {modal==='import'&&<ImportModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleImpFile} onConfirm={confirmImport} onDownload={downloadTemplate} onClose={()=>setModal(null)}/>}
       {modal==='orders'&&<OrdersModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handleOrdFile} onPreview={buildPreview} onConfirm={confirmOrders} onApply={applyOrders} hashes={hashes} onClose={()=>setModal(null)}/>}
       {modal==='packing'&&<PackingModal t={t} S={S} mdata={mdata} setMdata={setMdata} onFile={handlePackingFile} onApply={applyPackingList} onClose={()=>setModal(null)} prods={prods}/>}
@@ -1799,6 +1803,14 @@ function AppMain({session}){
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
       {showChangelog&&<ChangelogModal onClose={()=>setShowChangelog(false)} S={S}/>}
+
+      {/* PHOTO ZOOM MODAL */}
+      {photoZoomModal&&(
+        <div style={{...S.overlay,zIndex:300,background:'rgba(0,0,0,.85)'}} onClick={()=>setPhotoZoomModal(null)}>
+          <img src={photoZoomModal} alt="Product" style={{maxWidth:'92vw',maxHeight:'88vh',objectFit:'contain',borderRadius:8,boxShadow:'0 4px 30px rgba(0,0,0,.4)'}}/>
+          <button onClick={()=>setPhotoZoomModal(null)} style={{position:'fixed',top:16,right:16,background:'rgba(255,255,255,.15)',border:'1px solid rgba(255,255,255,.3)',color:'#fff',borderRadius:99,width:36,height:36,fontSize:18,cursor:'pointer'}}>✕</button>
+        </div>
+      )}
 
       {/* PO CREATE/EDIT MODAL */}
       {poModal&&(
@@ -2321,7 +2333,7 @@ function BarcodeScannerModal({S,lang,onResult,onClose}){
 }
 
 
-function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
+function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang,onZoomPhoto}){
   const[form,setForm]=useState({...{id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:''},...(mdata.form||{})});
   const isEdit=!!form.id;
   const[uploading,setUploading]=useState(false);
@@ -2364,7 +2376,7 @@ function ProductModal({t,S,mdata,setMdata,onSave,onClose,lang}){
             <input ref={photoInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={e=>handlePhotoUpload(e.target.files[0])}/>
             {form.photo_url?(
               <div style={{position:'relative',width:80,height:80}}>
-                <img src={form.photo_url} alt="Product" style={{width:80,height:80,objectFit:'cover',borderRadius:8,border:'1px solid #ddd'}}/>
+                <img src={form.photo_url} alt="Product" onClick={()=>onZoomPhoto&&onZoomPhoto(form.photo_url)} style={{width:80,height:80,objectFit:'cover',borderRadius:8,border:'1px solid #ddd',cursor:'pointer'}}/>
                 <button type="button" onClick={()=>setForm(prev=>({...prev,photo_url:''}))} style={{position:'absolute',top:-6,right:-6,background:'#dc3545',color:'#fff',border:'none',borderRadius:99,width:20,height:20,fontSize:11,cursor:'pointer',lineHeight:1}}>✕</button>
               </div>
             ):(
