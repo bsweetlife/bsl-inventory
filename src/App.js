@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.59';
+const APP_VERSION='v4.60';
 const CHANGELOG=[
+  {version:'v4.60',date:'2026-06-13',changes:['Fixed: setSessionId was calling itself recursively (same bug as v4.56) — caused silent crash on every chat message']},
   {version:'v4.59',date:'2026-06-13',changes:['Fixed Thinking stuck on typed messages: apiMsgs always includes current user message even if history is empty','Guard prevents empty messages array being sent to API']},
   {version:'v4.58',date:'2026-06-13',changes:['API errors now show as chat message instead of infinite Thinking...','Fixed apiMsgs filter to only pass string content to API (non-string tool results were causing API errors)','Added error logging to console for easier debugging']},
   {version:'v4.57',date:'2026-06-13',changes:['Fixed blank page crash: setChatMsgsSync was calling itself recursively instead of setChatMsgs']},
@@ -254,7 +255,7 @@ function AppMain({session}){
   const[chatSessions,setChatSessions]=useState([]);
   const[currentSessionId,setCurrentSessionId]=useState(null);
   const sessionIdRef=useRef(null);
-  const setSessionId=(id)=>{sessionIdRef.current=id;setSessionId(id);};
+  const setSessionId=(id)=>{sessionIdRef.current=id;setCurrentSessionId(id);};
   const[sessionsLoading,setSessionsLoading]=useState(false);
   const[chatFile,setChatFile]=useState(null);
   const[pendingDangerousTool,setPendingDangerousTool]=useState(null);
