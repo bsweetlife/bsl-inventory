@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.47';
+const APP_VERSION='v4.48';
 const CHANGELOG=[
+  {version:'v4.48',date:'2026-06-13',changes:['Voice now picks native Spanish voice (es-MX, es-US, es-ES) instead of English voice reading Spanish text','Waits for voices to load before speaking — fixes first-load silence on some browsers']},
   {version:'v4.47',date:'2026-06-13',changes:['Fixed: handsFreeModeRef was never declared — caused silent crash on every 👂 button tap']},
   {version:'v4.46',date:'2026-06-13',changes:['Fixed critical bug: speakText was incrementing sentence index twice causing onDone to fire after 1 sentence','Fixed 👂 button reading stale React state — now uses ref so toggle always works','Hands-free loop now reliably restarts after every Claude response']},
   {version:'v4.45',date:'2026-06-13',changes:['Voice status bar shows current state (listening/hands-free) with Stop button','Simplified button logic: 🎤 is tap-to-speak, 👂 toggles hands-free on/off cleanly','Removed conflicting onMouseDown/onTouchStart handlers that were double-firing']},
@@ -856,7 +857,29 @@ function AppMain({session}){
     window.speechSynthesis.cancel();
     const clean=text.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/#+\s/g,'').replace(/`(.+?)`/g,'$1').replace(/[✅❌🔧📦🌸🚨📊📋🚢⚠️🔴🟡]/g,'');
     const sentences=(clean.match(/[^.!?\n]+[.!?\n]*/g)||[clean]).slice(0,6);
-    const ttsLang=spokenLang==='es'?'es-MX':spokenLang==='en'?'en-US':lang==='es'?'es-MX':'en-US';
+    const isSpanish=spokenLang==='es'||(spokenLang==null&&lang==='es');
+    const ttsLang=isSpanish?'es-MX':'en-US';
+
+    // Pick best available voice for the language
+    function getVoice(){
+      const voices=window.speechSynthesis.getVoices();
+      if(!voices.length)return null;
+      if(isSpanish){
+        // Prefer native Spanish voices in order: es-MX, es-US, es-ES, any es-*
+        return voices.find(v=>v.lang==='es-MX'&&!v.localService===false)
+          ||voices.find(v=>v.lang==='es-MX')
+          ||voices.find(v=>v.lang==='es-US')
+          ||voices.find(v=>v.lang.startsWith('es-'))
+          ||voices.find(v=>v.lang.startsWith('es'))
+          ||null;
+      } else {
+        return voices.find(v=>v.lang==='en-US'&&v.localService!==false)
+          ||voices.find(v=>v.lang==='en-US')
+          ||voices.find(v=>v.lang.startsWith('en-'))
+          ||null;
+      }
+    }
+
     let idx=0;
     function speakOne(){
       if(idx>=sentences.length){onDone&&onDone();return;}
@@ -866,11 +889,22 @@ function AppMain({session}){
       utt.lang=ttsLang;
       utt.rate=1.0;
       utt.volume=1;
+      const voice=getVoice();
+      if(voice)utt.voice=voice;
       utt.onend=()=>{idx++;speakOne();};
       utt.onerror=()=>{idx++;speakOne();};
       window.speechSynthesis.speak(utt);
     }
-    speakOne();
+
+    // Voices may not be loaded yet on first call — wait for them
+    if(window.speechSynthesis.getVoices().length>0){
+      speakOne();
+    } else {
+      window.speechSynthesis.onvoiceschanged=()=>{
+        window.speechSynthesis.onvoiceschanged=null;
+        speakOne();
+      };
+    }
   }
 
   function detectLang(text){
