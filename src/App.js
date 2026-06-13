@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.43';
+const APP_VERSION='v4.44';
 const CHANGELOG=[
+  {version:'v4.44',date:'2026-06-13',changes:['Fixed 👂 hands-free button: 200ms delay before startListening so state settles first','startListening accepts force=true to abort stale mic session before restarting','Loop callbacks pass force=true so mic reliably reopens after each Claude response']},
   {version:'v4.43',date:'2026-06-13',changes:['Voice auto-detects spoken language — Spanish speech gets Spanish reply and Spanish TTS voice, English gets English, regardless of toggle','Hands-free loop passes detected language through all callbacks so every exchange stays in the right language']},
   {version:'v4.42',date:'2026-06-13',changes:['Fixed hands-free voice loop: listening restarts after speech finishes (not on a timer) — works reliably on iOS','speakText now accepts onDone callback so loop only continues when audio actually ends','handsFreeModeRef prevents stale closure bugs in voice callbacks']},
   {version:'v4.41',date:'2026-06-13',changes:['Fixed iOS voice readback: unlock speechSynthesis on first tap (iOS blocks autoplay audio)','Split long responses into sentences so iOS does not cut off speech mid-way','Hands-free and mic buttons now unlock audio on first interaction']},
@@ -873,8 +874,9 @@ function AppMain({session}){
     return matches.length>=2?'es':'en';
   }
 
-  function startListening(onResult){
-    if(!voiceSupported||isListening)return;
+  function startListening(onResult, force=false){
+    if(!voiceSupported||(isListening&&!force))return;
+    if(recognitionRef.current){try{recognitionRef.current.abort();}catch(e){}}
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     const rec=new SR();
     // Listen in both languages — use 'es-MX' if toggle is Spanish, otherwise 'en-US'
@@ -1025,12 +1027,12 @@ function AppMain({session}){
         if(finalReply===null)finalReply=currentData.content?.find(b=>b.type==='text')?.text||'Done!';
         // Replace thinking message with final reply + auto-save
         setChatMsgs(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
-        if(voiceText||handsFreeModeRef.current)speakText(finalReply,handsFreeModeRef.current?()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl)):null,detectedLangRef.current);
+        if(voiceText||handsFreeModeRef.current)speakText(finalReply,handsFreeModeRef.current?()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl),true):null,detectedLangRef.current);
       } else {
         const textBlock=data.content?.find(b=>b.type==='text');
         const reply=textBlock?.text||'Sorry, I could not process that.';
         setChatMsgs(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
-        if(voiceText||handsFreeModeRef.current)speakText(reply,handsFreeModeRef.current?()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl)):null,detectedLangRef.current);
+        if(voiceText||handsFreeModeRef.current)speakText(reply,handsFreeModeRef.current?()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl),true):null,detectedLangRef.current);
       }
     }catch(err){
       console.error(err);
@@ -1405,8 +1407,13 @@ function AppMain({session}){
                         unlockSpeech();
                         const next=!handsFreeMode;
                         setHandsFreeModeSync(next);
-                        if(next)startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl));
-                        else{window.speechSynthesis?.cancel();stopListening();}
+                        if(next){
+                          // Small delay so React state + ref settle before starting
+                          setTimeout(()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl),true),200);
+                        } else {
+                          window.speechSynthesis?.cancel();
+                          stopListening();
+                        }
                       }}
                     >{handsFreeMode?'🔴 Live':'👂'}</button>
                   )}
