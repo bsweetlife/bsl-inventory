@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.60';
+const APP_VERSION='v4.61';
 const CHANGELOG=[
+  {version:'v4.61',date:'2026-06-13',changes:['Claude now has access to location breakdown (Warehouse/EVI/Tripolac) per product in every chat message']},
   {version:'v4.60',date:'2026-06-13',changes:['Fixed: setSessionId was calling itself recursively (same bug as v4.56) — caused silent crash on every chat message']},
   {version:'v4.59',date:'2026-06-13',changes:['Fixed Thinking stuck on typed messages: apiMsgs always includes current user message even if history is empty','Guard prevents empty messages array being sent to API']},
   {version:'v4.58',date:'2026-06-13',changes:['API errors now show as chat message instead of infinite Thinking...','Fixed apiMsgs filter to only pass string content to API (non-string tool results were causing API errors)','Added error logging to console for easier debugging']},
@@ -1014,7 +1015,8 @@ function AppMain({session}){
     }
     try{
       const notesContext=agentNotes.length?`\nPermanent notes & instructions:\n${agentNotes.map(n=>`[${n.category}] ${n.title}: ${n.content}`).join('\n')}`:'';
-      const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}`;
+      const locationContext=locations.length?`\nInventory by location:\n${prods.map(p=>{const locs=locations.filter(l=>l.product_id===p.id&&l.qty>0);return locs.length?`- ${p.name}: ${locs.map(l=>`${l.location}: ${l.qty}`).join(', ')}`:null;}).filter(Boolean).join('\n')}`:'';
+      const inventoryContext=`Current inventory (${prods.length} products, all in SINGLES):\n${prods.map(p=>`- ID:${p.id} | ${p.name} | Root SKU: ${p.sku} | Stock: ${p.stock} | Velocity: ${p.velocity}/mo | Cost: $${p.cost} | Price: $${p.price} | Reorder at: ${p.reorder} | Status: ${gs(p)} | Supplier: ${p.supplier||'—'}`).join('\n')}${locationContext}`;
       const recentLog=`\nRecent changes:\n${logEntries.slice(0,10).map(l=>`- ${new Date(l.created_at).toLocaleDateString()}: ${l.description}`).join('\n')}`;
 
       const replyLang=lang==='es'?'Spanish':'English';
