@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.44';
+const APP_VERSION='v4.45';
 const CHANGELOG=[
+  {version:'v4.45',date:'2026-06-13',changes:['Voice status bar shows current state (listening/hands-free) with Stop button','Simplified button logic: 🎤 is tap-to-speak, 👂 toggles hands-free on/off cleanly','Removed conflicting onMouseDown/onTouchStart handlers that were double-firing']},
   {version:'v4.44',date:'2026-06-13',changes:['Fixed 👂 hands-free button: 200ms delay before startListening so state settles first','startListening accepts force=true to abort stale mic session before restarting','Loop callbacks pass force=true so mic reliably reopens after each Claude response']},
   {version:'v4.43',date:'2026-06-13',changes:['Voice auto-detects spoken language — Spanish speech gets Spanish reply and Spanish TTS voice, English gets English, regardless of toggle','Hands-free loop passes detected language through all callbacks so every exchange stays in the right language']},
   {version:'v4.42',date:'2026-06-13',changes:['Fixed hands-free voice loop: listening restarts after speech finishes (not on a timer) — works reliably on iOS','speakText now accepts onDone callback so loop only continues when audio actually ends','handsFreeModeRef prevents stale closure bugs in voice callbacks']},
@@ -1377,48 +1378,61 @@ function AppMain({session}){
                     <button style={{...S.btn,padding:'2px 7px',fontSize:11,color:'#dc3545',borderColor:'#f5c6cb'}} onClick={()=>{setChatFile(null);if(chatFileRef.current)chatFileRef.current.value='';}}>✕</button>
                   </div>
                 )}
-                <form onSubmit={sendChat} style={{display:'flex',gap:8}}>
+                <form onSubmit={sendChat} style={{display:'flex',gap:8,flexDirection:'column'}}>
+                  {/* Voice status bar */}
+                  {voiceSupported&&(handsFreeMode||isListening)&&(
+                    <div style={{background:isListening?'#dc354522':'#28a74522',border:`1px solid ${isListening?'#dc3545':'#28a745'}`,borderRadius:8,padding:'6px 12px',fontSize:12,color:isListening?'#dc3545':'#28a745',display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{animation:'pulse 1s infinite',display:'inline-block'}}>{isListening?'🎤':'👂'}</span>
+                      <span>{isListening?'Listening... speak now':'Hands-free ON — waiting for you to speak'}</span>
+                      <button type="button" style={{...S.btn,marginLeft:'auto',fontSize:11,padding:'2px 8px',color:'#dc3545',borderColor:'#dc3545'}} onClick={()=>{setHandsFreeModeSync(false);window.speechSynthesis?.cancel();stopListening();}}>Stop</button>
+                    </div>
+                  )}
+                  <div style={{display:'flex',gap:8}}>
                   <input ref={chatFileRef} type="file" accept="image/*,.pdf,.csv,.xlsx,.xls" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)setChatFile(f);}}/>
                   <button type="button" style={{...S.btn,padding:'8px 10px',fontSize:16,flexShrink:0,color:chatFile?'#1565c0':'#888',borderColor:chatFile?'#1565c0':'#ddd'}} onClick={()=>chatFileRef.current.click()} disabled={chatLoading} title="Attach file">📎</button>
                   {voiceSupported&&(
                     <button type="button"
-                      title={isListening?'Listening... (tap to cancel)':'Hold to speak'}
+                      title={isListening?'Tap to cancel':'Tap to speak once'}
                       style={{...S.btn,padding:'8px 12px',fontSize:18,flexShrink:0,
                         background:isListening?'#dc3545':'transparent',
-                        color:isListening?'#fff':handsFreeMode?'#28a745':'#888',
-                        borderColor:isListening?'#dc3545':handsFreeMode?'#28a745':'#ddd',
+                        color:isListening?'#fff':'#888',
+                        borderColor:isListening?'#dc3545':'#ddd',
                         animation:isListening?'pulse 1s infinite':undefined}}
-                      onMouseDown={()=>{unlockSpeech();if(!handsFreeMode)startListening((t,dl)=>{detectedLangRef.current=dl;setChatInput(t);});}}
-                      onTouchStart={e=>{e.preventDefault();unlockSpeech();if(!handsFreeMode)startListening((t,dl)=>{detectedLangRef.current=dl;setChatInput(t);});}}
                       onClick={()=>{
+                        unlockSpeech();
                         if(isListening){stopListening();return;}
-                        if(handsFreeMode){setHandsFreeModeSync(false);window.speechSynthesis?.cancel();return;}
+                        startListening((t,dl)=>{detectedLangRef.current=dl;setChatInput(t);},true);
                       }}
                     >{isListening?'⏹':'🎤'}</button>
                   )}
                   {voiceSupported&&(
                     <button type="button"
-                      title={handsFreeMode?'Hands-free ON — tap to turn off':'Tap for hands-free mode'}
+                      title={handsFreeMode?'Tap to stop hands-free':'Tap for hands-free conversation'}
                       style={{...S.btn,padding:'8px 10px',fontSize:13,flexShrink:0,
                         background:handsFreeMode?'#28a745':'transparent',
                         color:handsFreeMode?'#fff':'#888',
                         borderColor:handsFreeMode?'#28a745':'#ddd',fontWeight:600}}
                       onClick={()=>{
                         unlockSpeech();
-                        const next=!handsFreeMode;
-                        setHandsFreeModeSync(next);
-                        if(next){
-                          // Small delay so React state + ref settle before starting
-                          setTimeout(()=>startListening((t,dl)=>sendChat({preventDefault:()=>{}},t,dl),true),200);
-                        } else {
+                        if(handsFreeMode){
+                          setHandsFreeModeSync(false);
                           window.speechSynthesis?.cancel();
                           stopListening();
+                          return;
                         }
+                        setHandsFreeModeSync(true);
+                        setTimeout(()=>{
+                          startListening((transcript,dl)=>{
+                            detectedLangRef.current=dl;
+                            sendChat({preventDefault:()=>{}},transcript,dl);
+                          },true);
+                        },300);
                       }}
                     >{handsFreeMode?'🔴 Live':'👂'}</button>
                   )}
                   <textarea style={{...S.inp,flex:1,resize:'none',minHeight:40,maxHeight:200,lineHeight:'1.5',padding:'8px 10px',fontFamily:'inherit',fontSize:13,overflowY:'auto'}} rows={1} value={chatInput} onChange={e=>{setChatInput(e.target.value);e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,200)+'px';}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat(e);}}} placeholder={isListening?'🎤 Listening...':(chatFile?'Add a message (optional)...':t.chatPlaceholder)} disabled={chatLoading}/>
                   <button type="submit" style={{...S.btnP,padding:'8px 16px',alignSelf:'flex-end'}} disabled={chatLoading||(!chatInput.trim()&&!chatFile)}>→</button>
+                  </div>
                 </form>
               </div>
             </div>
