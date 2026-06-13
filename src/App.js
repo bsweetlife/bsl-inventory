@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.37';
+const APP_VERSION='v4.38';
 const CHANGELOG=[
+  {version:'v4.38',date:'2026-06-13',changes:['Voice input: tap 🎤 to speak, Claude reads response back','Hands-free mode (👂): continuous voice conversation — tap to start, Claude listens again after each response','PWA: app installable on iPhone — open in Safari → Add to Home Screen','Pink flower icon for home screen']},
   {version:'v4.37',date:'2026-06-12',changes:['New Purchase Orders page: create POs with supplier, expected date, line items per product, unit cost','PO statuses: Ordered → In Transit → Received (marks received, adds stock to chosen location automatically)','Overdue PO badge when expected date has passed','Incoming Stock card on dashboard shows open PO qty and links to PO page','Dashboard stats grid auto-fits to any number of cards']},
   {version:'v4.36',date:'2026-06-12',changes:['Notes can now be edited: pencil button opens the note pre-filled in the modal','Delete note now asks for confirmation']},
   {version:'v4.35',date:'2026-06-12',changes:['Removed Days column from dashboard table (velocities not yet populated) — can be restored later']},
@@ -101,6 +102,9 @@ const CHANGELOG=[
 ];
 
 function readXLSX(file,cb){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];cb(null,XLSX.utils.sheet_to_json(ws,{header:1,defval:''}))}catch(err){cb(err)}};r.readAsArrayBuffer(file)}
+
+// Inject pulse animation for mic button
+if(!document.getElementById('bsl-voice-style')){const st=document.createElement('style');st.id='bsl-voice-style';st.textContent='@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.1)}}';document.head.appendChild(st);}
 
 const S={
   app:{fontFamily:'system-ui,sans-serif',minHeight:'100vh',background:'#f0f0f0'},
@@ -201,6 +205,11 @@ function AppMain({session}){
   const[passwordError,setPasswordError]=useState('');
   const chatEndRef=useRef(null);
   const chatFileRef=useRef(null);
+  const recognitionRef=useRef(null);
+  const synthRef=useRef(window.speechSynthesis);
+  const[isListening,setIsListening]=useState(false);
+  const[handsFreeMode,setHandsFreeMode]=useState(false);
+  const[voiceSupported]=useState(()=>'webkitSpeechRecognition' in window||'SpeechRecognition' in window);
   const t=T[lang];
 
   useEffect(()=>{loadAll(true);},[]);
@@ -789,10 +798,40 @@ function AppMain({session}){
     }
   }
 
-  async function sendChat(e){
+  function speakText(text){
+    if(!synthRef.current)return;
+    synthRef.current.cancel();
+    const clean=text.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/#+\s/g,'').replace(/`(.+?)`/g,'$1').replace(/[✅❌🔧📦🌸🚨📊📋🚢]/g,'');
+    const utt=new SpeechSynthesisUtterance(clean.slice(0,1000));
+    utt.lang=lang==='es'?'es-MX':'en-US';
+    utt.rate=1.05;
+    synthRef.current.speak(utt);
+  }
+
+  function startListening(onResult){
+    if(!voiceSupported||isListening)return;
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    const rec=new SR();
+    rec.lang=lang==='es'?'es-MX':'en-US';
+    rec.continuous=false;
+    rec.interimResults=false;
+    rec.onstart=()=>setIsListening(true);
+    rec.onresult=e=>{const t=e.results[0][0].transcript;setIsListening(false);onResult(t);};
+    rec.onerror=()=>setIsListening(false);
+    rec.onend=()=>setIsListening(false);
+    recognitionRef.current=rec;
+    rec.start();
+  }
+
+  function stopListening(){recognitionRef.current?.stop();setIsListening(false);}
+
+  async function sendChat(e,voiceText){
+
+
     e.preventDefault();
-    if((!chatInput.trim()&&!chatFile)||chatLoading)return;
-    const userMsg=chatInput.trim();
+    if(voiceText){e.preventDefault();if(chatLoading)return;}
+    else if((!chatInput.trim()&&!chatFile)||chatLoading)return;
+    const userMsg=voiceText||chatInput.trim();
     const fileToSend=chatFile;
     setChatInput('');
     setChatFile(null);
@@ -912,10 +951,12 @@ function AppMain({session}){
         if(finalReply===null)finalReply=currentData.content?.find(b=>b.type==='text')?.text||'Done!';
         // Replace thinking message with final reply + auto-save
         setChatMsgs(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
+        if(voiceText||handsFreeMode)speakText(finalReply);
       } else {
         const textBlock=data.content?.find(b=>b.type==='text');
         const reply=textBlock?.text||'Sorry, I could not process that.';
         setChatMsgs(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
+        if(voiceText||handsFreeMode){speakText(reply);if(handsFreeMode)setTimeout(()=>startListening(t=>sendChat({preventDefault:()=>{}},t)),1200);}
       }
     }catch(err){
       console.error(err);
@@ -1242,7 +1283,39 @@ function AppMain({session}){
                 <form onSubmit={sendChat} style={{display:'flex',gap:8}}>
                   <input ref={chatFileRef} type="file" accept="image/*,.pdf,.csv,.xlsx,.xls" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)setChatFile(f);}}/>
                   <button type="button" style={{...S.btn,padding:'8px 10px',fontSize:16,flexShrink:0,color:chatFile?'#1565c0':'#888',borderColor:chatFile?'#1565c0':'#ddd'}} onClick={()=>chatFileRef.current.click()} disabled={chatLoading} title="Attach file">📎</button>
-                  <textarea style={{...S.inp,flex:1,resize:'none',minHeight:40,maxHeight:200,lineHeight:'1.5',padding:'8px 10px',fontFamily:'inherit',fontSize:13,overflowY:'auto'}} rows={1} value={chatInput} onChange={e=>{setChatInput(e.target.value);e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,200)+'px';}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat(e);}}} placeholder={chatFile?'Add a message (optional)...':t.chatPlaceholder} disabled={chatLoading}/>
+                  {voiceSupported&&(
+                    <button type="button"
+                      title={isListening?'Listening... (tap to cancel)':'Hold to speak'}
+                      style={{...S.btn,padding:'8px 12px',fontSize:18,flexShrink:0,
+                        background:isListening?'#dc3545':'transparent',
+                        color:isListening?'#fff':handsFreeMode?'#28a745':'#888',
+                        borderColor:isListening?'#dc3545':handsFreeMode?'#28a745':'#ddd',
+                        animation:isListening?'pulse 1s infinite':undefined}}
+                      onMouseDown={()=>!handsFreeMode&&startListening(t=>{setChatInput(t);})}
+                      onMouseUp={()=>!handsFreeMode&&!isListening&&null}
+                      onTouchStart={e=>{e.preventDefault();if(!handsFreeMode)startListening(t=>{setChatInput(t);});}}
+                      onClick={()=>{
+                        if(isListening){stopListening();return;}
+                        if(handsFreeMode){setHandsFreeMode(false);synthRef.current?.cancel();return;}
+                      }}
+                    >{isListening?'⏹':'🎤'}</button>
+                  )}
+                  {voiceSupported&&(
+                    <button type="button"
+                      title={handsFreeMode?'Hands-free ON — tap to turn off':'Tap for hands-free mode'}
+                      style={{...S.btn,padding:'8px 10px',fontSize:13,flexShrink:0,
+                        background:handsFreeMode?'#28a745':'transparent',
+                        color:handsFreeMode?'#fff':'#888',
+                        borderColor:handsFreeMode?'#28a745':'#ddd',fontWeight:600}}
+                      onClick={()=>{
+                        const next=!handsFreeMode;
+                        setHandsFreeMode(next);
+                        if(next)startListening(t=>sendChat({preventDefault:()=>{}},t));
+                        else{synthRef.current?.cancel();stopListening();}
+                      }}
+                    >{handsFreeMode?'🔴 Live':'👂'}</button>
+                  )}
+                  <textarea style={{...S.inp,flex:1,resize:'none',minHeight:40,maxHeight:200,lineHeight:'1.5',padding:'8px 10px',fontFamily:'inherit',fontSize:13,overflowY:'auto'}} rows={1} value={chatInput} onChange={e=>{setChatInput(e.target.value);e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,200)+'px';}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat(e);}}} placeholder={isListening?'🎤 Listening...':(chatFile?'Add a message (optional)...':t.chatPlaceholder)} disabled={chatLoading}/>
                   <button type="submit" style={{...S.btnP,padding:'8px 16px',alignSelf:'flex-end'}} disabled={chatLoading||(!chatInput.trim()&&!chatFile)}>→</button>
                 </form>
               </div>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="42" fill="#1a1a2e"/>
+  <ellipse cx="96.0" cy="60.0" rx="18.2" ry="28.8" fill="#FF69B4" opacity="0.92" transform="rotate(0,96.0,60.0)"/>
+<ellipse cx="127.2" cy="78.0" rx="18.2" ry="28.8" fill="#FF69B4" opacity="0.92" transform="rotate(60,127.2,78.0)"/>
+<ellipse cx="127.2" cy="114.0" rx="18.2" ry="28.8" fill="#FF69B4" opacity="0.92" transform="rotate(120,127.2,114.0)"/>
+<ellipse cx="96.0" cy="132.0" rx="18.2" ry="28.8" fill="#FF69B4" opacity="0.92" transform="rotate(180,96.0,132.0)"/>
+<ellipse cx="64.8" cy="114.0" rx="18.2" ry="28.8" fill="#FF69B4" opacity="0.92" transform="rotate(240,64.8,114.0)"/>
+<ellipse cx="64.8" cy="78.0" rx="18.2" ry="28.8" fill="#FF69B4" opacity="0.92" transform="rotate(300,64.8,78.0)"/>
+
+  <circle cx="96.0" cy="96.0" r="25.0" fill="#FFD700"/>
+  <circle cx="96.0" cy="96.0" r="15.0" fill="#FFA500"/>
+  <text x="96.0" y="169" text-anchor="middle" font-family="system-ui" font-weight="800" font-size="25" fill="white" opacity="0.9">BSL</text>
+</svg>
