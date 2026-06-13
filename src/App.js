@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.57';
+const APP_VERSION='v4.58';
 const CHANGELOG=[
+  {version:'v4.58',date:'2026-06-13',changes:['API errors now show as chat message instead of infinite Thinking...','Fixed apiMsgs filter to only pass string content to API (non-string tool results were causing API errors)','Added error logging to console for easier debugging']},
   {version:'v4.57',date:'2026-06-13',changes:['Fixed blank page crash: setChatMsgsSync was calling itself recursively instead of setChatMsgs']},
   {version:'v4.56',date:'2026-06-13',changes:['Fixed stuck Thinking... in voice mode: chatMsgsRef keeps full conversation history fresh so voice loop sends correct context to API','All message updates go through chatMsgsRef so multi-turn voice conversations work properly']},
   {version:'v4.55',date:'2026-06-13',changes:['Restored chat session sidebar','Voice hands-free stays in one continuous session — no longer creates a new chat per message','Session tracked via ref so voice loop never loses the current session ID']},
@@ -1018,9 +1019,9 @@ function AppMain({session}){
       const voiceInstruction=voiceText?` VOICE MODE: Your response will be read aloud. Keep answers SHORT and conversational — 1-3 sentences max. No bullet points, no markdown, no lists. Speak naturally like you're talking, not writing. For inventory questions give just the key number and status, not every field.`:'';
       const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${replyLang}.${voiceInstruction} 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others). 10) When the user wants to MOVE stock between locations, USE the transfer_stock tool — total stock does not change. NEVER express a transfer as stock updates.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
-      // Build messages array — replace last user message content with rich content if file attached
-      const apiMsgs=newMsgs.filter(m=>m.role!=='system').map((m,i)=>{
-        if(i===newMsgs.length-1&&filePreview)return{role:'user',content:userContent};
+      // Build messages array — only string content, replace last if file attached
+      const apiMsgs=newMsgs.filter(m=>m.role!=='system'&&typeof m.content==='string').map((m,i,arr)=>{
+        if(i===arr.length-1&&filePreview)return{role:'user',content:userContent};
         return{role:m.role,content:m.content};
       });
 
@@ -1033,6 +1034,13 @@ function AppMain({session}){
         messages:apiMsgs,
       })});
       const data=await res.json();
+      if(!res.ok||data.error){
+        const errMsg=data.error?.message||data.error||`API error ${res.status}`;
+        console.error('API error:',errMsg,data);
+        setChatMsgsSync(prev=>[...prev,{role:'assistant',content:`❌ ${errMsg}`}]);
+        setChatLoading(false);
+        return;
+      }
 
       // Check if Claude wants to use tools — agentic loop: keep executing until text-only response
       const hasToolUse=data.content?.some(b=>b.type==='tool_use');
