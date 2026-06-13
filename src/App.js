@@ -76,8 +76,11 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.52';
+const APP_VERSION='v4.55';
 const CHANGELOG=[
+  {version:'v4.55',date:'2026-06-13',changes:['Restored chat session sidebar','Voice hands-free stays in one continuous session — no longer creates a new chat per message','Session tracked via ref so voice loop never loses the current session ID']},
+  {version:'v4.54',date:'2026-06-13',changes:['Fixed: voice hands-free was creating a new chat session for every message — now stays in same conversation','sessionIdRef prevents stale React closure from losing track of current session during voice loop']},
+  {version:'v4.53',date:'2026-06-13',changes:['Removed chat session sidebar — speeds up chat significantly','New Chat button moved into chat header','Sessions still auto-save but no longer loaded on every page refresh']},
   {version:'v4.52',date:'2026-06-13',changes:['Voice messages no longer clear the typed text in the input box']},
   {version:'v4.51',date:'2026-06-13',changes:['Voice mode: Claude gives short conversational replies (1-3 sentences) instead of reading bullet-point lists','Fixed sentence splitter cutting off at prices like $5.64','Voice instruction only active when using mic — typed chat still gets full detailed responses']},
   {version:'v4.50',date:'2026-06-13',changes:['Voice no longer cuts off at prices like $5.64 — decimal numbers no longer treated as sentence endings','Bullet point lines (- Stock, - Costo) joined into speech flow instead of breaking the chain','Increased max sentences from 6 to 12 so longer responses are fully read']},
@@ -240,6 +243,8 @@ function AppMain({session}){
   const[chatLoading,setChatLoading]=useState(false);
   const[chatSessions,setChatSessions]=useState([]);
   const[currentSessionId,setCurrentSessionId]=useState(null);
+  const sessionIdRef=useRef(null);
+  const setSessionId=(id)=>{sessionIdRef.current=id;setSessionId(id);};
   const[sessionsLoading,setSessionsLoading]=useState(false);
   const[chatFile,setChatFile]=useState(null);
   const[pendingDangerousTool,setPendingDangerousTool]=useState(null);
@@ -777,7 +782,7 @@ function AppMain({session}){
     const title=firstUserMsg.slice(0,60)+(firstUserMsg.length>60?'...':'');
     const{data}=await supabase.from('chat_sessions').insert({user_email:userEmail,title,messages:[],created_at:new Date().toISOString(),updated_at:new Date().toISOString()}).select().single();
     if(data){
-      setCurrentSessionId(data.id);
+      setSessionId(data.id);
       setChatSessions(prev=>[{id:data.id,title,created_at:data.created_at,updated_at:data.updated_at},...prev]);
       return data.id;
     }
@@ -791,7 +796,7 @@ function AppMain({session}){
     }else{
       setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
     }
-    setCurrentSessionId(session.id);
+    setSessionId(session.id);
     setPage('chat');
   }
 
@@ -801,13 +806,13 @@ function AppMain({session}){
     await supabase.from('chat_sessions').delete().eq('id',id);
     setChatSessions(prev=>prev.filter(s=>s.id!==id));
     if(currentSessionId===id){
-      setCurrentSessionId(null);
+      setSessionId(null);
       setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
     }
   }
 
   function startNewChat(){
-    setCurrentSessionId(null);
+    setSessionId(null);
     setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
     setChatInput('');
     setChatFile(null);
@@ -992,8 +997,8 @@ function AppMain({session}){
     setChatMsgs(newMsgs);
     setChatLoading(true);
     // Auto-create session on first real user message
-    let sessionId=currentSessionId;
-    if(!sessionId&&!chatMsgs.some(m=>m.role==='user')){
+    let sessionId=sessionIdRef.current;
+    if(!sessionId){
       sessionId=await createNewSession(userMsg||(fileToSend?fileToSend.name:'New chat'));
     }
     try{
