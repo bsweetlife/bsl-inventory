@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.51';
+const APP_VERSION='v4.52';
 const CHANGELOG=[
+  {version:'v4.52',date:'2026-06-13',changes:['Voice messages no longer clear the typed text in the input box']},
   {version:'v4.51',date:'2026-06-13',changes:['Voice mode: Claude gives short conversational replies (1-3 sentences) instead of reading bullet-point lists','Fixed sentence splitter cutting off at prices like $5.64','Voice instruction only active when using mic — typed chat still gets full detailed responses']},
   {version:'v4.50',date:'2026-06-13',changes:['Voice no longer cuts off at prices like $5.64 — decimal numbers no longer treated as sentence endings','Bullet point lines (- Stock, - Costo) joined into speech flow instead of breaking the chain','Increased max sentences from 6 to 12 so longer responses are fully read']},
   {version:'v4.49',date:'2026-06-13',changes:['Voice language now always matches app toggle — Spanish mode = speaks/listens/replies in Spanish, English = English','Removed unreliable auto-detection — simpler and more predictable']},
@@ -940,11 +941,11 @@ function AppMain({session}){
 
 
     e.preventDefault();
-    if(voiceText){e.preventDefault();if(chatLoading)return;}
+    if(voiceText){if(chatLoading)return;}
     else if((!chatInput.trim()&&!chatFile)||chatLoading)return;
     const userMsg=voiceText||chatInput.trim();
     const fileToSend=chatFile;
-    setChatInput('');
+    if(!voiceText)setChatInput('');
     setChatFile(null);
     if(chatFileRef.current)chatFileRef.current.value='';
 
