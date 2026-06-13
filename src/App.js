@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.63';
+const APP_VERSION='v4.64';
 const CHANGELOG=[
+  {version:'v4.64',date:'2026-06-13',changes:['Fixed ZXing CDN URL (wrong package path) — tries unpkg then jsdelivr as fallback']},
   {version:'v4.63',date:'2026-06-13',changes:['Barcode scanner now works on iOS Safari via ZXing library (loaded from CDN) — BarcodeDetector only used as fast path on Chrome/Android','Manual code entry always available via toggle button']},
   {version:'v4.62',date:'2026-06-13',changes:['Add/Edit Product: photo upload (stored in Supabase Storage), shows thumbnail when editing','UPC field with camera barcode scanner (BarcodeDetector API) — scan EAN/UPC/QR codes directly','Manual UPC entry fallback for browsers without barcode scanning support']},
   {version:'v4.61',date:'2026-06-13',changes:['Claude now has access to location breakdown (Warehouse/EVI/Tripolac) per product in every chat message']},
@@ -2142,11 +2143,22 @@ function CostCalculatorPage({prods,globalSettings,calcCost,saveGlobalSettings,co
 function loadZXing(){
   return new Promise((resolve,reject)=>{
     if(window.ZXing){resolve(window.ZXing);return;}
-    const script=document.createElement('script');
-    script.src='https://cdnjs.cloudflare.com/ajax/libs/zxing/0.20.0/index.min.js';
-    script.onload=()=>resolve(window.ZXing);
-    script.onerror=()=>reject(new Error('Failed to load barcode scanner library'));
-    document.head.appendChild(script);
+    const urls=[
+      'https://unpkg.com/@zxing/library@latest/umd/index.min.js',
+      'https://cdn.jsdelivr.net/npm/@zxing/library@latest/umd/index.min.js',
+    ];
+    function tryLoad(i){
+      if(i>=urls.length){reject(new Error('Failed to load barcode scanner library'));return;}
+      const script=document.createElement('script');
+      script.src=urls[i];
+      script.onload=()=>{
+        if(window.ZXing)resolve(window.ZXing);
+        else tryLoad(i+1);
+      };
+      script.onerror=()=>tryLoad(i+1);
+      document.head.appendChild(script);
+    }
+    tryLoad(0);
   });
 }
 
