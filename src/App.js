@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.55';
+const APP_VERSION='v4.56';
 const CHANGELOG=[
+  {version:'v4.56',date:'2026-06-13',changes:['Fixed stuck Thinking... in voice mode: chatMsgsRef keeps full conversation history fresh so voice loop sends correct context to API','All message updates go through chatMsgsRef so multi-turn voice conversations work properly']},
   {version:'v4.55',date:'2026-06-13',changes:['Restored chat session sidebar','Voice hands-free stays in one continuous session — no longer creates a new chat per message','Session tracked via ref so voice loop never loses the current session ID']},
   {version:'v4.54',date:'2026-06-13',changes:['Fixed: voice hands-free was creating a new chat session for every message — now stays in same conversation','sessionIdRef prevents stale React closure from losing track of current session during voice loop']},
   {version:'v4.53',date:'2026-06-13',changes:['Removed chat session sidebar — speeds up chat significantly','New Chat button moved into chat header','Sessions still auto-save but no longer loaded on every page refresh']},
@@ -239,6 +240,12 @@ function AppMain({session}){
   const[modal,setModal]=useState(null);
   const[mdata,setMdata]=useState({});
   const[chatMsgs,setChatMsgs]=useState([]);
+  const chatMsgsRef=useRef([]);
+  const setChatMsgsSync=(msgs)=>{
+    const val=typeof msgs==='function'?msgs(chatMsgsRef.current):msgs;
+    chatMsgsRef.current=val;
+    setChatMsgsSync(val);
+  };
   const[chatInput,setChatInput]=useState('');
   const[chatLoading,setChatLoading]=useState(false);
   const[chatSessions,setChatSessions]=useState([]);
@@ -268,7 +275,7 @@ function AppMain({session}){
   const t=T[lang];
 
   useEffect(()=>{loadAll(true);},[]);
-  useEffect(()=>{if(chatMsgs.length===0)setChatMsgs([{role:'assistant',content:T[lang].chatPlaceholder}]);},[lang]);
+  useEffect(()=>{if(chatMsgs.length===0)setChatMsgsSync([{role:'assistant',content:T[lang].chatPlaceholder}]);},[lang]);
   useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:'smooth'});},[chatMsgs]);
 
   async function loadAll(isFirstLoad=false){
@@ -298,7 +305,7 @@ function AppMain({session}){
     setLoading(false);
     // Only reset chat on first page load, never during data refreshes mid-conversation
     if(isFirstLoad){
-      setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+      setChatMsgsSync([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
     }
   }
 
@@ -792,9 +799,9 @@ function AppMain({session}){
   async function loadSession(session){
     const{data}=await supabase.from('chat_sessions').select('messages').eq('id',session.id).single();
     if(data&&data.messages&&data.messages.length>0){
-      setChatMsgs(data.messages);
+      setChatMsgsSync(data.messages);
     }else{
-      setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+      setChatMsgsSync([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
     }
     setSessionId(session.id);
     setPage('chat');
@@ -807,13 +814,13 @@ function AppMain({session}){
     setChatSessions(prev=>prev.filter(s=>s.id!==id));
     if(currentSessionId===id){
       setSessionId(null);
-      setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+      setChatMsgsSync([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
     }
   }
 
   function startNewChat(){
     setSessionId(null);
-    setChatMsgs([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
+    setChatMsgsSync([{role:'assistant',content:`Hi! I'm Claude, your BSL inventory manager. I have full access to your inventory, customer sales, and notes. Ask me anything — stock levels, reorder suggestions, sales trends, or upload a packing list and I'll process it automatically.`}]);
     setChatInput('');
     setChatFile(null);
   }
@@ -828,7 +835,7 @@ function AppMain({session}){
     setPendingDangerousTool(null);
     setPasswordInput('');
     setPasswordError('');
-    setChatMsgs(prev=>[...prev,{role:'assistant',content:`🔧 Clearing all stock...`}]);
+    setChatMsgsSync(prev=>[...prev,{role:'assistant',content:`🔧 Clearing all stock...`}]);
     try{
       await executeClearAllStock(reason);
       // Send second API call so Claude can confirm
@@ -847,9 +854,9 @@ function AppMain({session}){
       })});
       const data2=await res2.json();
       const finalReply=data2.content?.find(b=>b.type==='text')?.text||'All stock cleared to 0.';
-      setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:finalReply}]);
+      setChatMsgsSync(prev=>[...prev.slice(0,-1),{role:'assistant',content:finalReply}]);
     }catch(err){
-      setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:'Error clearing stock. Please try again.'}]);
+      setChatMsgsSync(prev=>[...prev.slice(0,-1),{role:'assistant',content:'Error clearing stock. Please try again.'}]);
     }
   }
 
@@ -993,8 +1000,8 @@ function AppMain({session}){
     }
 
     const displayMsg={role:'user',content:userMsg||(fileToSend?`📎 ${fileToSend.name}`:'')};
-    const newMsgs=[...chatMsgs,displayMsg];
-    setChatMsgs(newMsgs);
+    const newMsgs=[...chatMsgsRef.current,displayMsg];
+    setChatMsgsSync(newMsgs);
     setChatLoading(true);
     // Auto-create session on first real user message
     let sessionId=sessionIdRef.current;
@@ -1034,7 +1041,7 @@ function AppMain({session}){
         let currentData=data;
         let finalReply=null;
         // Show thinking message
-        setChatMsgs(prev=>[...prev,{role:'assistant',content:`🔧 Updating inventory...`}]);
+        setChatMsgsSync(prev=>[...prev,{role:'assistant',content:`🔧 Updating inventory...`}]);
 
         for(let iter=0;iter<10;iter++){
           const toolBlocks=currentData.content?.filter(b=>b.type==='tool_use')||[];
@@ -1045,7 +1052,7 @@ function AppMain({session}){
           // Intercept dangerous tools — require password first
           const dangerous=toolBlocks.find(b=>b.name==='clear_all_stock');
           if(dangerous){
-            setChatMsgs(prev=>[...prev.slice(0,-1),{role:'assistant',content:`⚠️ This will set ALL ${prods.length} products to 0 stock. Please enter the system password to confirm.`}]);
+            setChatMsgsSync(prev=>[...prev.slice(0,-1),{role:'assistant',content:`⚠️ This will set ALL ${prods.length} products to 0 stock. Please enter the system password to confirm.`}]);
             setPendingDangerousTool({toolUseBlock:dangerous,data:currentData,newMsgs:convo,systemPrompt,reason:dangerous.input.reason});
             setChatLoading(false);
             return;
@@ -1069,17 +1076,17 @@ function AppMain({session}){
         }
         if(finalReply===null)finalReply=currentData.content?.find(b=>b.type==='text')?.text||'Done!';
         // Replace thinking message with final reply + auto-save
-        setChatMsgs(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
+        setChatMsgsSync(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
         if(voiceText||handsFreeModeRef.current)speakText(finalReply,handsFreeModeRef.current?()=>startListening(t=>sendChat({preventDefault:()=>{}},t),true):null);
       } else {
         const textBlock=data.content?.find(b=>b.type==='text');
         const reply=textBlock?.text||'Sorry, I could not process that.';
-        setChatMsgs(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
+        setChatMsgsSync(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
         if(voiceText||handsFreeModeRef.current)speakText(reply,handsFreeModeRef.current?()=>startListening(t=>sendChat({preventDefault:()=>{}},t),true):null);
       }
     }catch(err){
       console.error(err);
-      setChatMsgs(prev=>[...prev,{role:'assistant',content:'Error connecting to Claude API.'}]);
+      setChatMsgsSync(prev=>[...prev,{role:'assistant',content:'Error connecting to Claude API.'}]);
     }
     setChatLoading(false);
   }
@@ -1407,7 +1414,7 @@ function AppMain({session}){
                   <div style={{display:'flex',gap:8}}>
                     <input style={{...S.inp,flex:1,borderColor:passwordError?'#dc3545':'#ffc107'}} type="password" placeholder="Enter system password..." value={passwordInput} onChange={e=>{setPasswordInput(e.target.value);setPasswordError('');}} onKeyDown={async e=>{if(e.key==='Enter')await confirmDangerousAction();}} autoFocus/>
                     <button style={{...S.btn,background:'#dc3545',color:'#fff',border:'none'}} onClick={async()=>await confirmDangerousAction()}>Confirm</button>
-                    <button style={S.btn} onClick={()=>{setPendingDangerousTool(null);setPasswordInput('');setPasswordError('');setChatMsgs(prev=>[...prev,{role:'assistant',content:'Action cancelled.'}]);}}>Cancel</button>
+                    <button style={S.btn} onClick={()=>{setPendingDangerousTool(null);setPasswordInput('');setPasswordError('');setChatMsgsSync(prev=>[...prev,{role:'assistant',content:'Action cancelled.'}]);}}>Cancel</button>
                   </div>
                   {passwordError&&<div style={{fontSize:11,color:'#dc3545',marginTop:5}}>{passwordError}</div>}
                 </div>
