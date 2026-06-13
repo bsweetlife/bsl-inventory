@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.41';
+const APP_VERSION='v4.42';
 const CHANGELOG=[
+  {version:'v4.42',date:'2026-06-13',changes:['Fixed hands-free voice loop: listening restarts after speech finishes (not on a timer) — works reliably on iOS','speakText now accepts onDone callback so loop only continues when audio actually ends','handsFreeModeRef prevents stale closure bugs in voice callbacks']},
   {version:'v4.41',date:'2026-06-13',changes:['Fixed iOS voice readback: unlock speechSynthesis on first tap (iOS blocks autoplay audio)','Split long responses into sentences so iOS does not cut off speech mid-way','Hands-free and mic buttons now unlock audio on first interaction']},
   {version:'v4.40',date:'2026-06-13',changes:['Mobile nav: hamburger menu (☰) replaces full nav bar on iPhone — tap to open/close','Chat on mobile: full-width single column, ☰ button to open session history as overlay','Chat sidebar closes automatically after selecting a session or starting new chat','isMobile detection updates on resize']},
   {version:'v4.39',date:'2026-06-13',changes:['Mobile responsive layout — nav, tables, cards, modals all adapt to iPhone screen','PWA icon fixed: PNG instead of SVG (required for iOS home screen)','Chat session sidebar hidden on mobile to save space']},
@@ -240,6 +241,8 @@ function AppMain({session}){
   const synthRef=useRef(window.speechSynthesis);
   const[isListening,setIsListening]=useState(false);
   const[handsFreeMode,setHandsFreeMode]=useState(false);
+  const handsFreeModeRef=useRef(false);
+  const setHandsFreeModeSync=(v)=>{handsFreeModeRef.current=v;setHandsFreeMode(v);};
   const[voiceSupported]=useState(()=>'webkitSpeechRecognition' in window||'SpeechRecognition' in window);
   const[isMobile,setIsMobile]=useState(()=>window.innerWidth<768);
   const[showSidebar,setShowSidebar]=useState(false);
@@ -841,19 +844,19 @@ function AppMain({session}){
     speechUnlocked.current=true;
   }
 
-  function speakText(text){
+  function speakText(text, onDone){
     if(!window.speechSynthesis)return;
     window.speechSynthesis.cancel();
     const clean=text.replace(/\*\*(.+?)\*\*/g,'$1').replace(/\*(.+?)\*/g,'$1').replace(/#+\s/g,'').replace(/`(.+?)`/g,'$1').replace(/[✅❌🔧📦🌸🚨📊📋🚢⚠️🔴🟡]/g,'');
-    // Split into sentences — iOS cuts off long single utterances
     const sentences=(clean.match(/[^.!?\n]+[.!?\n]*/g)||[clean]).slice(0,8);
     let i=0;
     function next(){
-      if(i>=sentences.length)return;
+      if(i>=sentences.length){onDone&&onDone();return;}
       const utt=new SpeechSynthesisUtterance(sentences[i].trim().slice(0,250));
       utt.lang=lang==='es'?'es-MX':'en-US';
       utt.rate=1.05;utt.volume=1;
       utt.onend=()=>{i++;next();};
+      utt.onerror=()=>{i++;next();};
       window.speechSynthesis.speak(utt);
       i++;
     }
@@ -1003,12 +1006,12 @@ function AppMain({session}){
         if(finalReply===null)finalReply=currentData.content?.find(b=>b.type==='text')?.text||'Done!';
         // Replace thinking message with final reply + auto-save
         setChatMsgs(prev=>{const updated=[...prev.slice(0,-1),{role:'assistant',content:finalReply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
-        if(voiceText||handsFreeMode)speakText(finalReply);
+        if(voiceText||handsFreeMode)speakText(finalReply,handsFreeModeRef.current?()=>startListening(t=>sendChat({preventDefault:()=>{}},t)):null);
       } else {
         const textBlock=data.content?.find(b=>b.type==='text');
         const reply=textBlock?.text||'Sorry, I could not process that.';
         setChatMsgs(prev=>{const updated=[...prev,{role:'assistant',content:reply}];if(sessionId)saveSessionMessages(sessionId,updated);return updated;});
-        if(voiceText||handsFreeMode){speakText(reply);if(handsFreeMode)setTimeout(()=>startListening(t=>sendChat({preventDefault:()=>{}},t)),1200);}
+        if(voiceText||handsFreeMode)speakText(reply,handsFreeModeRef.current?()=>startListening(t=>sendChat({preventDefault:()=>{}},t)):null);
       }
     }catch(err){
       console.error(err);
@@ -1368,7 +1371,7 @@ function AppMain({session}){
                       onTouchStart={e=>{e.preventDefault();unlockSpeech();if(!handsFreeMode)startListening(t=>{setChatInput(t);});}}
                       onClick={()=>{
                         if(isListening){stopListening();return;}
-                        if(handsFreeMode){setHandsFreeMode(false);window.speechSynthesis?.cancel();return;}
+                        if(handsFreeMode){setHandsFreeModeSync(false);window.speechSynthesis?.cancel();return;}
                       }}
                     >{isListening?'⏹':'🎤'}</button>
                   )}
@@ -1382,7 +1385,7 @@ function AppMain({session}){
                       onClick={()=>{
                         unlockSpeech();
                         const next=!handsFreeMode;
-                        setHandsFreeMode(next);
+                        setHandsFreeModeSync(next);
                         if(next)startListening(t=>sendChat({preventDefault:()=>{}},t));
                         else{window.speechSynthesis?.cancel();stopListening();}
                       }}
