@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.39';
+const APP_VERSION='v4.40';
 const CHANGELOG=[
+  {version:'v4.40',date:'2026-06-13',changes:['Mobile nav: hamburger menu (☰) replaces full nav bar on iPhone — tap to open/close','Chat on mobile: full-width single column, ☰ button to open session history as overlay','Chat sidebar closes automatically after selecting a session or starting new chat','isMobile detection updates on resize']},
   {version:'v4.39',date:'2026-06-13',changes:['Mobile responsive layout — nav, tables, cards, modals all adapt to iPhone screen','PWA icon fixed: PNG instead of SVG (required for iOS home screen)','Chat session sidebar hidden on mobile to save space']},
   {version:'v4.38',date:'2026-06-13',changes:['Voice input: tap 🎤 to speak, Claude reads response back','Hands-free mode (👂): continuous voice conversation — tap to start, Claude listens again after each response','PWA: app installable on iPhone — open in Safari → Add to Home Screen','Pink flower icon for home screen']},
   {version:'v4.37',date:'2026-06-12',changes:['New Purchase Orders page: create POs with supplier, expected date, line items per product, unit cost','PO statuses: Ordered → In Transit → Received (marks received, adds stock to chosen location automatically)','Overdue PO badge when expected date has passed','Incoming Stock card on dashboard shows open PO qty and links to PO page','Dashboard stats grid auto-fits to any number of cards']},
@@ -239,6 +240,10 @@ function AppMain({session}){
   const[isListening,setIsListening]=useState(false);
   const[handsFreeMode,setHandsFreeMode]=useState(false);
   const[voiceSupported]=useState(()=>'webkitSpeechRecognition' in window||'SpeechRecognition' in window);
+  const[isMobile,setIsMobile]=useState(()=>window.innerWidth<768);
+  const[showSidebar,setShowSidebar]=useState(false);
+  const[mobileMenuOpen,setMobileMenuOpen]=useState(false);
+  useEffect(()=>{const h=()=>setIsMobile(window.innerWidth<768);window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h);},[]);
   const t=T[lang];
 
   useEffect(()=>{loadAll(true);},[]);
@@ -1160,18 +1165,33 @@ function AppMain({session}){
   // ── RENDER ───────────────────────────────────────────────────
   return(
     <div style={S.app}>
-      <nav style={S.nav}>
-        <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
-          <span style={{fontWeight:700,fontSize:16}}>{t.title}</span>
-          {[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders','📦 '+(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
-            <button key={k} onClick={()=>setPage(k)} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:12}}>{l}</button>
-          ))}
+      <nav style={{...S.nav,height:'auto',padding:'0 1rem'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',height:52,width:'100%'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'0.75rem'}}>
+            <span style={{fontWeight:700,fontSize:16}}>{t.title}</span>
+            {!isMobile&&[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders','📦 '+(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
+              <button key={k} onClick={()=>setPage(k)} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:12}}>{l}</button>
+            ))}
+          </div>
+          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            {!isMobile&&<button onClick={()=>setShowChangelog(true)} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:6,color:'#ccc',fontSize:11,padding:'3px 8px',cursor:'pointer',fontFamily:'monospace'}}>{APP_VERSION}</button>}
+            {!isMobile&&<button style={{...S.btn,color:'#fff',border:'1px solid rgba(255,255,255,.3)',fontSize:12}} onClick={()=>setLang(l=>l==='en'?'es':'en')}>{lang==='en'?'🇲🇽 Español':'🇺🇸 English'}</button>}
+            {!isMobile&&<button style={{...S.btn,color:'#aaa',border:'1px solid rgba(255,255,255,.15)',fontSize:11}} onClick={()=>supabase.auth.signOut()}>Sign out</button>}
+            {isMobile&&<button style={{...S.btn,color:'#fff',border:'1px solid rgba(255,255,255,.3)',fontSize:12}} onClick={()=>setLang(l=>l==='en'?'es':'en')}>{lang==='en'?'🇲🇽':'🇺🇸'}</button>}
+            {isMobile&&<button style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:8,color:'#fff',fontSize:20,padding:'4px 10px',cursor:'pointer'}} onClick={()=>setMobileMenuOpen(m=>!m)}>☰</button>}
+          </div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <button onClick={()=>setShowChangelog(true)} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:6,color:'#ccc',fontSize:11,padding:'3px 8px',cursor:'pointer',fontFamily:'monospace',letterSpacing:'.03em'}} title="View version history">{APP_VERSION}</button>
-          <button style={{...S.btn,color:'#fff',border:'1px solid rgba(255,255,255,.3)',fontSize:12}} onClick={()=>setLang(l=>l==='en'?'es':'en')}>{lang==='en'?'🇲🇽 Español':'🇺🇸 English'}</button>
-          <button style={{...S.btn,color:'#aaa',border:'1px solid rgba(255,255,255,.15)',fontSize:11}} onClick={()=>supabase.auth.signOut()}>Sign out</button>
-        </div>
+        {isMobile&&mobileMenuOpen&&(
+          <div style={{borderTop:'1px solid rgba(255,255,255,.1)',padding:'8px 0',display:'flex',flexDirection:'column',gap:2}}>
+            {[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders','📦 '+(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
+              <button key={k} onClick={()=>{setPage(k);setMobileMenuOpen(false);}} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:14,padding:'10px 12px',justifyContent:'flex-start',borderRadius:6}}>{l}</button>
+            ))}
+            <div style={{display:'flex',gap:8,padding:'8px 4px',borderTop:'1px solid rgba(255,255,255,.1)',marginTop:4}}>
+              <button onClick={()=>setShowChangelog(true)} style={{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:6,color:'#ccc',fontSize:11,padding:'4px 10px',cursor:'pointer',fontFamily:'monospace'}}>{APP_VERSION}</button>
+              <button style={{...S.btn,color:'#aaa',border:'1px solid rgba(255,255,255,.15)',fontSize:11}} onClick={()=>supabase.auth.signOut()}>Sign out</button>
+            </div>
+          </div>
+        )}
       </nav>
 
       <main style={S.main}>
@@ -1253,18 +1273,20 @@ function AppMain({session}){
 
         {/* CHAT */}
         {!loading&&page==='chat'&&(
-          <div style={{display:'flex',gap:12,height:'calc(100vh - 120px)'}}>
+          <div style={{display:'flex',gap:12,height:isMobile?'calc(100dvh - 80px)':'calc(100vh - 120px)',position:'relative'}}>
 
-            {/* ── Sessions sidebar */}
-            <div style={{width:240,flexShrink:0,background:'#fff',borderRadius:12,boxShadow:'0 1px 3px rgba(0,0,0,.08)',display:'flex',flexDirection:'column',overflow:'hidden'}}>
-              <div style={{padding:'12px 14px',borderBottom:'1px solid #eee'}}>
-                <button style={{...S.btnP,width:'100%',justifyContent:'center',gap:6}} onClick={startNewChat}>✏️ New Chat</button>
+            {/* ── Sessions sidebar — hidden on mobile unless toggled */}
+            {(!isMobile||showSidebar)&&(
+            <div style={{width:isMobile?'100%':240,flexShrink:0,background:'#fff',borderRadius:12,boxShadow:'0 1px 3px rgba(0,0,0,.08)',display:'flex',flexDirection:'column',overflow:'hidden',position:isMobile?'absolute':'relative',zIndex:isMobile?100:1,top:0,left:0,bottom:0}}>
+              <div style={{padding:'12px 14px',borderBottom:'1px solid #eee',display:'flex',gap:8}}>
+                <button style={{...S.btnP,flex:1,justifyContent:'center',gap:6}} onClick={()=>{startNewChat();if(isMobile)setShowSidebar(false);}}>✏️ New Chat</button>
+                {isMobile&&<button style={{...S.btn,padding:'8px 10px'}} onClick={()=>setShowSidebar(false)}>✕</button>}
               </div>
               <div style={{flex:1,overflowY:'auto',padding:'8px 6px'}}>
                 {sessionsLoading&&<div style={{textAlign:'center',padding:'1rem',fontSize:12,color:'#aaa'}}>Loading...</div>}
                 {!sessionsLoading&&!chatSessions.length&&<div style={{textAlign:'center',padding:'1.5rem 1rem',fontSize:12,color:'#aaa'}}>No saved conversations yet</div>}
                 {chatSessions.map(s=>(
-                  <div key={s.id} onClick={()=>loadSession(s)} style={{display:'flex',alignItems:'flex-start',gap:6,padding:'8px 10px',borderRadius:8,cursor:'pointer',background:currentSessionId===s.id?'#f0f0f0':'transparent',marginBottom:2,transition:'background .15s'}}>
+                  <div key={s.id} onClick={()=>{loadSession(s);if(isMobile)setShowSidebar(false);}} style={{display:'flex',alignItems:'flex-start',gap:6,padding:'8px 10px',borderRadius:8,cursor:'pointer',background:currentSessionId===s.id?'#f0f0f0':'transparent',marginBottom:2,transition:'background .15s'}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:12,fontWeight:currentSessionId===s.id?600:400,color:'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.title||'Untitled'}</div>
                       <div style={{fontSize:10,color:'#aaa',marginTop:2}}>{new Date(s.updated_at).toLocaleDateString()} {new Date(s.updated_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
@@ -1274,11 +1296,15 @@ function AppMain({session}){
                 ))}
               </div>
             </div>
+            )}
 
             {/* ── Chat window */}
             <div style={{...S.card,flex:1,display:'flex',flexDirection:'column',minWidth:0}}>
               <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem',paddingBottom:'0.75rem',borderBottom:'1px solid #eee',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <span>{currentSessionId?chatSessions.find(s=>s.id===currentSessionId)?.title||t.chat:t.chat}</span>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  {isMobile&&<button style={{...S.btn,padding:'5px 9px',fontSize:13}} onClick={()=>setShowSidebar(true)} title="Chat history">☰</button>}
+                  <span style={{fontSize:isMobile?13:15}}>{currentSessionId?chatSessions.find(s=>s.id===currentSessionId)?.title||t.chat:t.chat}</span>
+                </div>
                 {currentSessionId&&<span style={{fontSize:10,color:'#aaa',fontWeight:400}}>Auto-saved</span>}
               </div>
               <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column',gap:12,paddingBottom:'1rem'}}>
