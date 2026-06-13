@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.56';
+const APP_VERSION='v4.57';
 const CHANGELOG=[
+  {version:'v4.57',date:'2026-06-13',changes:['Fixed blank page crash: setChatMsgsSync was calling itself recursively instead of setChatMsgs']},
   {version:'v4.56',date:'2026-06-13',changes:['Fixed stuck Thinking... in voice mode: chatMsgsRef keeps full conversation history fresh so voice loop sends correct context to API','All message updates go through chatMsgsRef so multi-turn voice conversations work properly']},
   {version:'v4.55',date:'2026-06-13',changes:['Restored chat session sidebar','Voice hands-free stays in one continuous session — no longer creates a new chat per message','Session tracked via ref so voice loop never loses the current session ID']},
   {version:'v4.54',date:'2026-06-13',changes:['Fixed: voice hands-free was creating a new chat session for every message — now stays in same conversation','sessionIdRef prevents stale React closure from losing track of current session during voice loop']},
@@ -244,7 +245,7 @@ function AppMain({session}){
   const setChatMsgsSync=(msgs)=>{
     const val=typeof msgs==='function'?msgs(chatMsgsRef.current):msgs;
     chatMsgsRef.current=val;
-    setChatMsgsSync(val);
+    setChatMsgs(val);
   };
   const[chatInput,setChatInput]=useState('');
   const[chatLoading,setChatLoading]=useState(false);
