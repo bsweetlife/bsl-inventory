@@ -28,6 +28,10 @@ const T = {
     confirmDeductions:'Confirm Deductions',applyDeductions:'✓ Apply',
     inbound:'Inbound (stock IN)',outbound:'Outbound (stock OUT)',
     name:'Name',
+    purchaseOrders:'Purchase Orders',newPO:'+ New PO',poNumber:'PO Number',poSupplier:'Supplier',poExpected:'Expected Arrival',poStatus:'Status',poItems:'Items',poTotal:'Total Cost',
+    poOrdered:'Ordered',poInTransit:'In Transit',poReceived:'Received',poCancelled:'Cancelled',
+    poReceive:'Mark Received',poProduct:'Product',poQty:'Qty (singles)',poUnitCost:'Unit Cost',addItem:'+ Add Item',
+    incomingStock:'Incoming Stock',
   },
   es: {
     title:'BSL Inventario',dashboard:'Panel',chat:'Chat con Claude',customers:'Clientes',reports:'Reportes',notes:'Notas',
@@ -53,6 +57,10 @@ const T = {
     confirmDeductions:'Confirmar Deducciones',applyDeductions:'✓ Aplicar',
     inbound:'Entrada (stock IN)',outbound:'Salida (stock OUT)',
     name:'Nombre',
+    purchaseOrders:'Órdenes de Compra',newPO:'+ Nueva OC',poNumber:'No. OC',poSupplier:'Proveedor',poExpected:'Llegada Esperada',poStatus:'Estado',poItems:'Artículos',poTotal:'Costo Total',
+    poOrdered:'Ordenado',poInTransit:'En Tránsito',poReceived:'Recibido',poCancelled:'Cancelado',
+    poReceive:'Marcar Recibido',poProduct:'Producto',poQty:'Cant. (singles)',poUnitCost:'Costo Unitario',addItem:'+ Agregar Artículo',
+    incomingStock:'Stock Entrante',
   }
 };
 
@@ -68,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.36';
+const APP_VERSION='v4.37';
 const CHANGELOG=[
+  {version:'v4.37',date:'2026-06-12',changes:['New Purchase Orders page: create POs with supplier, expected date, line items per product, unit cost','PO statuses: Ordered → In Transit → Received (marks received, adds stock to chosen location automatically)','Overdue PO badge when expected date has passed','Incoming Stock card on dashboard shows open PO qty and links to PO page','Dashboard stats grid auto-fits to any number of cards']},
   {version:'v4.36',date:'2026-06-12',changes:['Notes can now be edited: pencil button opens the note pre-filled in the modal','Delete note now asks for confirmation']},
   {version:'v4.35',date:'2026-06-12',changes:['Removed Days column from dashboard table (velocities not yet populated) — can be restored later']},
   {version:'v4.34',date:'2026-06-12',changes:['New Sellable Value dashboard card: total stock × selling price, next to cost-based Inventory Value']},
@@ -174,6 +183,9 @@ function AppMain({session}){
   const[locationModal,setLocationModal]=useState(null);
   const[showChangelog,setShowChangelog]=useState(false);
   const[locations,setLocations]=useState([]);
+  const[purchaseOrders,setPurchaseOrders]=useState([]);
+  const[poModal,setPoModal]=useState(null);
+  const[poReceiveModal,setPoReceiveModal]=useState(null);
   const[loading,setLoading]=useState(true);
   const[modal,setModal]=useState(null);
   const[mdata,setMdata]=useState({});
@@ -198,7 +210,7 @@ function AppMain({session}){
   async function loadAll(isFirstLoad=false){
     setLoading(true);
     try{
-      const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs},{data:locs}]=await Promise.all([
+      const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs},{data:locs},{data:pos}]=await Promise.all([
         supabase.from('products').select('*').order('name'),
         supabase.from('change_log').select('*').order('created_at',{ascending:false}).limit(200),
         supabase.from('uploaded_files').select('file_hash'),
@@ -206,6 +218,7 @@ function AppMain({session}){
         supabase.from('agent_notes').select('*').order('created_at',{ascending:false}),
         supabase.from('global_settings').select('*'),
         supabase.from('inventory_locations').select('*'),
+        supabase.from('purchase_orders').select('*,purchase_order_items(*)').order('created_at',{ascending:false}),
       ]);
       if(p)setProds(p);
       if(l)setLog(l);
@@ -214,6 +227,7 @@ function AppMain({session}){
       if(n)setAgentNotes(n);
       if(gs){const s={};gs.forEach(g=>s[g.key]=parseFloat(g.value));setGlobalSettings(prev=>({...prev,...s}));}
       if(locs)setLocations(locs);
+      if(pos)setPurchaseOrders(pos);
       // Load chat sessions separately (not blocking)
       loadChatSessions();
     }catch(e){console.error(e);}
@@ -1079,7 +1093,7 @@ function AppMain({session}){
       <nav style={S.nav}>
         <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
           <span style={{fontWeight:700,fontSize:16}}>{t.title}</span>
-          {[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['notes',t.notes]].map(([k,l])=>(
+          {[['dashboard',t.dashboard],['chat',t.chat],['calculator',lang==='es'?'💰 Calculadora':'💰 Calculator'],['customers',t.customers],['reports',t.reports],['purchase_orders','📦 '+(t.purchaseOrders||'Purchase Orders')],['notes',t.notes]].map(([k,l])=>(
             <button key={k} onClick={()=>setPage(k)} style={{...S.btn,background:page===k?'rgba(255,255,255,.15)':'transparent',color:'#fff',border:'none',fontSize:12}}>{l}</button>
           ))}
         </div>
@@ -1106,14 +1120,23 @@ function AppMain({session}){
             </div>
           </div>
 
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:9,marginBottom:'1.5rem'}}>
-            {[{l:t.totalProducts,v:prods.length},{l:t.inventoryValue,v:'$'+Math.round(totalVal).toLocaleString()},{l:t.sellableValue,v:'$'+Math.round(totalSellVal).toLocaleString()},{l:t.lowStock,v:lowN,a:lowN>0},{l:t.critical,v:critN,a:critN>0}].map(m=>(
-              <div key={m.l} style={{background:m.a?'#FFF3CD':'#fff',borderRadius:12,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
-                <div style={{fontSize:11,color:m.a?'#856404':'#888',marginBottom:4}}>{m.l}</div>
-                <div style={{fontSize:22,fontWeight:700,color:m.a?'#856404':'#111'}}>{m.v}</div>
+          {/* Stats cards */}
+          {(()=>{
+            const openPOs=purchaseOrders.filter(po=>po.status!=='received'&&po.status!=='cancelled');
+            const incomingQty=openPOs.reduce((a,po)=>(po.purchase_order_items||[]).reduce((b,i)=>b+(parseFloat(i.qty)||0),a),0);
+            const incomingCards=openPOs.length?[{l:t.incomingStock||'Incoming Stock',v:`${incomingQty} singles`,sub:`${openPOs.length} open PO${openPOs.length!==1?'s':''}`,c:'#1565c0',bg:'#e3f2fd'}]:[];
+            return(
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:9,marginBottom:'1.5rem'}}>
+                {[{l:t.totalProducts,v:prods.length},{l:t.inventoryValue,v:'$'+Math.round(totalVal).toLocaleString()},{l:t.sellableValue,v:'$'+Math.round(totalSellVal).toLocaleString()},{l:t.lowStock,v:lowN,a:lowN>0},{l:t.critical,v:critN,a:critN>0},...incomingCards].map(m=>(
+                  <div key={m.l} onClick={m.c?()=>setPage('purchase_orders'):undefined} style={{background:m.bg||(m.a?'#FFF3CD':'#fff'),borderRadius:12,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',cursor:m.c?'pointer':undefined,border:m.c?`1px solid ${m.c}33`:undefined}}>
+                    <div style={{fontSize:11,color:m.c||( m.a?'#856404':'#888'),marginBottom:4}}>{m.l}</div>
+                    <div style={{fontSize:22,fontWeight:700,color:m.c||(m.a?'#856404':'#111')}}>{m.v}</div>
+                    {m.sub&&<div style={{fontSize:11,color:m.c,marginTop:2}}>{m.sub}</div>}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
 
           <div style={{display:'flex',gap:6,marginBottom:'1rem',flexWrap:'wrap'}}>
             {[['all',t.allProducts],['alerts',`${t.alerts} (${alerts.length})`],['channels',t.channels],['log',`📋 ${t.log} (${logEntries.length})`]].map(([k,l])=>(
@@ -1318,6 +1341,97 @@ function AppMain({session}){
           </div>
         )}
 
+        {/* PURCHASE ORDERS */}
+        {!loading&&page==='purchase_orders'&&(
+          <div>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1.25rem',flexWrap:'wrap',gap:8}}>
+              <div style={{fontSize:20,fontWeight:600}}>📦 {t.purchaseOrders}</div>
+              <button style={S.btnP} onClick={()=>setPoModal({po_number:'PO-'+Date.now().toString().slice(-6),supplier:'',expected_date:'',notes:'',status:'ordered',items:[{product_id:'',product_name:'',qty:'',unit_cost:''}]})}>
+                {t.newPO}
+              </button>
+            </div>
+
+            {/* Summary cards */}
+            {(()=>{
+              const open=purchaseOrders.filter(p=>p.status==='ordered');
+              const transit=purchaseOrders.filter(p=>p.status==='in_transit');
+              const totalIncoming=purchaseOrders.filter(p=>p.status!=='received'&&p.status!=='cancelled').reduce((a,po)=>(po.purchase_order_items||[]).reduce((b,i)=>b+(parseFloat(i.qty)||0),a),0);
+              const totalValue=purchaseOrders.filter(p=>p.status!=='received'&&p.status!=='cancelled').reduce((a,po)=>(po.purchase_order_items||[]).reduce((b,i)=>b+(parseFloat(i.qty)||0)*(parseFloat(i.unit_cost)||0),a),0);
+              return(
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:9,marginBottom:'1.5rem'}}>
+                  {[{l:'Open POs',v:open.length,c:'#e67e22',bg:'#fff8f0'},{l:'In Transit',v:transit.length,c:'#1565c0',bg:'#e3f2fd'},{l:'Total Incoming',v:`${totalIncoming} singles`,c:'#28a745',bg:'#f0fff4'},{l:'Incoming Value',v:'$'+Math.round(totalValue).toLocaleString(),c:'#7b2d8b',bg:'#fdf4ff'}].map(m=>(
+                    <div key={m.l} style={{background:m.bg,borderRadius:12,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',border:`1px solid ${m.c}22`}}>
+                      <div style={{fontSize:11,color:m.c,marginBottom:4}}>{m.l}</div>
+                      <div style={{fontSize:22,fontWeight:700,color:m.c}}>{m.v}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* PO list */}
+            {!purchaseOrders.length&&<div style={{textAlign:'center',padding:'3rem',color:'#aaa',fontSize:13}}>No purchase orders yet — click "+ New PO" to create your first one</div>}
+            <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              {purchaseOrders.map(po=>{
+                const items=po.purchase_order_items||[];
+                const totalQty=items.reduce((a,i)=>a+(parseFloat(i.qty)||0),0);
+                const totalCost=items.reduce((a,i)=>a+(parseFloat(i.qty)||0)*(parseFloat(i.unit_cost)||0),0);
+                const statusColors={ordered:{bg:'#fff8f0',c:'#e67e22',label:t.poOrdered},in_transit:{bg:'#e3f2fd',c:'#1565c0',label:t.poInTransit},received:{bg:'#f0fff4',c:'#28a745',label:t.poReceived},cancelled:{bg:'#f5f5f5',c:'#aaa',label:t.poCancelled}};
+                const sc=statusColors[po.status]||statusColors.ordered;
+                const isOpen=po.status!=='received'&&po.status!=='cancelled';
+                return(
+                  <div key={po.id} style={{background:'#fff',borderRadius:12,padding:'16px 18px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',border:`1px solid ${sc.c}33`}}>
+                    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+                      <div style={{flex:1}}>
+                        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6,flexWrap:'wrap'}}>
+                          <span style={{fontWeight:700,fontSize:15}}>#{po.po_number}</span>
+                          <span style={{fontSize:11,background:sc.bg,color:sc.c,padding:'2px 10px',borderRadius:99,fontWeight:600,border:`1px solid ${sc.c}44`}}>{sc.label}</span>
+                          {po.expected_date&&<span style={{fontSize:11,color:'#888'}}>📅 Expected: <strong>{new Date(po.expected_date+'T12:00:00').toLocaleDateString()}</strong></span>}
+                          {isOpen&&po.expected_date&&new Date(po.expected_date)<new Date()&&<span style={{fontSize:11,background:'#FFF3CD',color:'#856404',padding:'2px 8px',borderRadius:99,fontWeight:600}}>⚠️ Overdue</span>}
+                        </div>
+                        <div style={{fontSize:12,color:'#555',marginBottom:8}}><strong>{po.supplier||'Unknown supplier'}</strong>{po.notes&&<span style={{color:'#aaa'}}> · {po.notes}</span>}</div>
+                        {/* Line items */}
+                        <div style={{background:'#f9f9f9',borderRadius:8,overflow:'hidden',fontSize:12}}>
+                          <table style={{width:'100%',borderCollapse:'collapse'}}>
+                            <thead><tr>{[t.poProduct,t.poQty,t.poUnitCost,'Subtotal'].map(h=><th key={h} style={{...S.th,fontSize:11,padding:'6px 10px',background:'#f0f0f0'}}>{h}</th>)}</tr></thead>
+                            <tbody>
+                              {items.map((item,i)=>(
+                                <tr key={i} style={{background:i%2?'#fafafa':'#fff'}}>
+                                  <td style={{...S.td,fontSize:11}}>{item.product_name||'—'}</td>
+                                  <td style={{...S.td,fontSize:11}}>{item.qty} singles</td>
+                                  <td style={{...S.td,fontSize:11}}>{item.unit_cost?fm(item.unit_cost):'—'}</td>
+                                  <td style={{...S.td,fontSize:11,fontWeight:600}}>{item.unit_cost?fm((parseFloat(item.qty)||0)*(parseFloat(item.unit_cost)||0)):'—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot><tr>
+                              <td style={{...S.td,fontWeight:700,fontSize:11}} colSpan={1}>Total</td>
+                              <td style={{...S.td,fontWeight:700,fontSize:11}}>{totalQty} singles</td>
+                              <td style={S.td}></td>
+                              <td style={{...S.td,fontWeight:700,fontSize:11,color:'#1565c0'}}>{fm(totalCost)}</td>
+                            </tr></tfoot>
+                          </table>
+                        </div>
+                      </div>
+                      {/* Actions */}
+                      <div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0}}>
+                        {isOpen&&po.status==='ordered'&&(
+                          <button style={{...S.btn,color:'#1565c0',borderColor:'#1565c0',fontSize:11}} onClick={async()=>{await supabase.from('purchase_orders').update({status:'in_transit'}).eq('id',po.id);await loadAll();}}>🚚 In Transit</button>
+                        )}
+                        {isOpen&&(
+                          <button style={{...S.btn,color:'#28a745',borderColor:'#28a745',fontSize:11,fontWeight:600}} onClick={()=>setPoReceiveModal({po,receiveLocations:items.map(i=>({...i,location:'Warehouse'}))})}>✅ {t.poReceive}</button>
+                        )}
+                        <button style={{...S.btn,fontSize:11}} onClick={()=>setPoModal({...po,items:items.map(i=>({product_id:i.product_id,product_name:i.product_name,qty:i.qty,unit_cost:i.unit_cost}))})}>✏️ Edit</button>
+                        {isOpen&&<button style={{...S.btn,color:'#dc3545',borderColor:'#f5c6cb',fontSize:11}} onClick={async()=>{if(!window.confirm('Cancel this PO?'))return;await supabase.from('purchase_orders').update({status:'cancelled'}).eq('id',po.id);await loadAll();}}>✕ Cancel</button>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* NOTES */}
         {!loading&&page==='notes'&&(
           <div style={S.card}>
@@ -1377,6 +1491,122 @@ function AppMain({session}){
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
       {showChangelog&&<ChangelogModal onClose={()=>setShowChangelog(false)} S={S}/>}
+
+      {/* PO CREATE/EDIT MODAL */}
+      {poModal&&(
+        <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&setPoModal(null)}>
+          <div style={{...S.sheet,maxWidth:620,maxHeight:'90vh',overflowY:'auto'}}>
+            <div style={{fontSize:15,fontWeight:600,marginBottom:'1rem'}}>📦 {poModal.id?'Edit':'New'} Purchase Order</div>
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                  <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.poNumber}</label>
+                  <input style={S.inp} value={poModal.po_number||''} onChange={e=>setPoModal(p=>({...p,po_number:e.target.value}))}/>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                  <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.poSupplier}</label>
+                  <input style={S.inp} placeholder="e.g. EVI Labs, Amazon Vendor" value={poModal.supplier||''} onChange={e=>setPoModal(p=>({...p,supplier:e.target.value}))}/>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                  <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.poExpected}</label>
+                  <input type="date" style={S.inp} value={poModal.expected_date||''} onChange={e=>setPoModal(p=>({...p,expected_date:e.target.value}))}/>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                  <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.poStatus}</label>
+                  <select style={S.inp} value={poModal.status||'ordered'} onChange={e=>setPoModal(p=>({...p,status:e.target.value}))}>
+                    <option value="ordered">{t.poOrdered}</option>
+                    <option value="in_transit">{t.poInTransit}</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                <label style={{fontSize:11,color:'#888',fontWeight:500}}>Notes (optional)</label>
+                <input style={S.inp} placeholder="e.g. Reorder of lactose-free line" value={poModal.notes||''} onChange={e=>setPoModal(p=>({...p,notes:e.target.value}))}/>
+              </div>
+              {/* Line items */}
+              <div style={{fontSize:12,fontWeight:600,color:'#555',marginTop:4}}>Line Items</div>
+              {(poModal.items||[]).map((item,idx)=>(
+                <div key={idx} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr auto',gap:8,alignItems:'center',background:'#f9f9f9',borderRadius:8,padding:'8px 10px'}}>
+                  <select style={{...S.inp,fontSize:12}} value={item.product_id||''} onChange={e=>{const prod=prods.find(p=>p.id===parseInt(e.target.value));setPoModal(p=>({...p,items:p.items.map((it,i)=>i===idx?{...it,product_id:e.target.value,product_name:prod?.name||''}:it)}))}}>
+                    <option value="">— Select product —</option>
+                    {prods.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <input style={{...S.inp,fontSize:12}} type="number" placeholder="Qty (singles)" value={item.qty||''} onChange={e=>setPoModal(p=>({...p,items:p.items.map((it,i)=>i===idx?{...it,qty:e.target.value}:it)}))}/>
+                  <input style={{...S.inp,fontSize:12}} type="number" step="0.01" placeholder="Unit cost $" value={item.unit_cost||''} onChange={e=>setPoModal(p=>({...p,items:p.items.map((it,i)=>i===idx?{...it,unit_cost:e.target.value}:it)}))}/>
+                  <button style={{...S.btn,color:'#dc3545',borderColor:'#f5c6cb',padding:'3px 8px',fontSize:12}} onClick={()=>setPoModal(p=>({...p,items:p.items.filter((_,i)=>i!==idx)}))}>✕</button>
+                </div>
+              ))}
+              <button style={{...S.btn,fontSize:12,alignSelf:'flex-start'}} onClick={()=>setPoModal(p=>({...p,items:[...(p.items||[]),{product_id:'',product_name:'',qty:'',unit_cost:''}]}))}>+ {t.addItem}</button>
+              {/* Total */}
+              {(poModal.items||[]).length>0&&(
+                <div style={{textAlign:'right',fontSize:13,fontWeight:600,color:'#1565c0'}}>
+                  Total: {fm((poModal.items||[]).reduce((a,i)=>(parseFloat(i.qty)||0)*(parseFloat(i.unit_cost)||0)+a,0))} · {(poModal.items||[]).reduce((a,i)=>a+(parseFloat(i.qty)||0),0)} singles
+                </div>
+              )}
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:'1rem'}}>
+              <button style={S.btn} onClick={()=>setPoModal(null)}>{t.cancel}</button>
+              <button style={S.btnP} onClick={async()=>{
+                const items=(poModal.items||[]).filter(i=>i.product_id&&i.qty);
+                if(!items.length){alert('Add at least one product');return;}
+                const payload={po_number:poModal.po_number,supplier:poModal.supplier,expected_date:poModal.expected_date||null,notes:poModal.notes||'',status:poModal.status||'ordered'};
+                let poId=poModal.id;
+                if(poId){
+                  await supabase.from('purchase_orders').update(payload).eq('id',poId);
+                  await supabase.from('purchase_order_items').delete().eq('purchase_order_id',poId);
+                }else{
+                  const{data}=await supabase.from('purchase_orders').insert(payload).select().single();
+                  poId=data.id;
+                }
+                await supabase.from('purchase_order_items').insert(items.map(i=>({purchase_order_id:poId,product_id:parseInt(i.product_id),product_name:i.product_name,qty:parseFloat(i.qty),unit_cost:parseFloat(i.unit_cost)||null})));
+                await loadAll();
+                setPoModal(null);
+              }}>{t.save}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PO RECEIVE MODAL */}
+      {poReceiveModal&&(
+        <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&setPoReceiveModal(null)}>
+          <div style={{...S.sheet,maxWidth:540}}>
+            <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>✅ Receive PO #{poReceiveModal.po.po_number}</div>
+            <div style={{fontSize:12,color:'#888',marginBottom:'1rem'}}>Select which location each product goes to. Stock will be added automatically.</div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {poReceiveModal.receiveLocations.map((item,idx)=>(
+                <div key={idx} style={{background:'#f9f9f9',borderRadius:8,padding:'10px 12px',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                  <div style={{flex:1,fontSize:13,fontWeight:500}}>{item.product_name}</div>
+                  <div style={{fontSize:12,color:'#888'}}>{item.qty} singles</div>
+                  <select style={{...S.inp,width:'auto',fontSize:12}} value={item.location} onChange={e=>setPoReceiveModal(p=>({...p,receiveLocations:p.receiveLocations.map((r,i)=>i===idx?{...r,location:e.target.value}:r)}))}>
+                    <option value="Warehouse">Warehouse</option>
+                    <option value="EVI">EVI</option>
+                    <option value="Tripolac">Tripolac</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:'1rem'}}>
+              <button style={S.btn} onClick={()=>setPoReceiveModal(null)}>{t.cancel}</button>
+              <button style={S.btnP} onClick={async()=>{
+                const{po,receiveLocations}=poReceiveModal;
+                // Add stock for each item at its chosen location
+                for(const item of receiveLocations){
+                  if(!item.product_id||!item.qty)continue;
+                  const fresh=await getFreshStock(parseInt(item.product_id));
+                  const newStock=(fresh||0)+parseFloat(item.qty);
+                  await supabase.from('products').update({stock:newStock}).eq('id',item.product_id);
+                  await adjustLocationQty(parseInt(item.product_id),item.location,parseFloat(item.qty));
+                  await supabase.from('change_log').insert({description:`PO #${po.po_number} received: ${item.product_name} +${item.qty} singles @ ${item.location}`,qty_change:parseFloat(item.qty),user_email:userEmail});
+                }
+                await supabase.from('purchase_orders').update({status:'received',received_date:new Date().toISOString().split('T')[0]}).eq('id',po.id);
+                await loadAll();
+                setPoReceiveModal(null);
+              }}>✅ Confirm Receipt</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
