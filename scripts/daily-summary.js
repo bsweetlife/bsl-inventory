@@ -4,10 +4,13 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import ws from 'ws';
+import ws from 'ws';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY,
+  { realtime: { transport: ws } }
 );
 const resend = new Resend(process.env.RESEND_API_KEY);
 
