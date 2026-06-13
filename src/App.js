@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.38';
+const APP_VERSION='v4.39';
 const CHANGELOG=[
+  {version:'v4.39',date:'2026-06-13',changes:['Mobile responsive layout — nav, tables, cards, modals all adapt to iPhone screen','PWA icon fixed: PNG instead of SVG (required for iOS home screen)','Chat session sidebar hidden on mobile to save space']},
   {version:'v4.38',date:'2026-06-13',changes:['Voice input: tap 🎤 to speak, Claude reads response back','Hands-free mode (👂): continuous voice conversation — tap to start, Claude listens again after each response','PWA: app installable on iPhone — open in Safari → Add to Home Screen','Pink flower icon for home screen']},
   {version:'v4.37',date:'2026-06-12',changes:['New Purchase Orders page: create POs with supplier, expected date, line items per product, unit cost','PO statuses: Ordered → In Transit → Received (marks received, adds stock to chosen location automatically)','Overdue PO badge when expected date has passed','Incoming Stock card on dashboard shows open PO qty and links to PO page','Dashboard stats grid auto-fits to any number of cards']},
   {version:'v4.36',date:'2026-06-12',changes:['Notes can now be edited: pencil button opens the note pre-filled in the modal','Delete note now asks for confirmation']},
@@ -103,8 +104,36 @@ const CHANGELOG=[
 
 function readXLSX(file,cb){const r=new FileReader();r.onload=e=>{try{const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];cb(null,XLSX.utils.sheet_to_json(ws,{header:1,defval:''}))}catch(err){cb(err)}};r.readAsArrayBuffer(file)}
 
-// Inject pulse animation for mic button
-if(!document.getElementById('bsl-voice-style')){const st=document.createElement('style');st.id='bsl-voice-style';st.textContent='@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.1)}}';document.head.appendChild(st);}
+// Inject pulse animation + mobile responsive styles
+if(!document.getElementById('bsl-voice-style')){const st=document.createElement('style');st.id='bsl-voice-style';st.textContent=`
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.1)}}
+@media(max-width:768px){
+  /* Nav */
+  nav{height:auto!important;flex-wrap:wrap;padding:8px 12px!important;gap:6px}
+  nav>div:first-child{flex-wrap:wrap;gap:4px}
+  nav button{font-size:11px!important;padding:5px 8px!important}
+  /* Main */
+  [style*="maxWidth:1200"]{padding:0.75rem!important}
+  /* Stats grid */
+  [style*="gridTemplateColumns"]{grid-template-columns:repeat(2,1fr)!important}
+  /* Tables — scroll horizontally */
+  table{font-size:11px!important}
+  th,td{padding:5px 6px!important}
+  /* Cards */
+  [style*="padding:'1.25rem'"]{padding:0.85rem!important}
+  /* Chat */
+  [style*="height:calc(100vh"]{height:calc(100dvh - 120px)!important}
+  /* Modals */
+  [style*="width:600"]{width:95vw!important;max-width:95vw!important}
+  [style*="width:540"]{width:95vw!important;max-width:95vw!important}
+  /* Hide session sidebar on mobile */
+  [style*="width:220"]{display:none!important}
+  /* PO grid */
+  [style*="gridTemplateColumns:'1fr 1fr'"]{grid-template-columns:1fr!important}
+  /* Buttons row */
+  [style*="display:'flex',gap:7"]{flex-wrap:wrap!important}
+}
+`;document.head.appendChild(st);}
 
 const S={
   app:{fontFamily:'system-ui,sans-serif',minHeight:'100vh',background:'#f0f0f0'},
