@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.70';
+const APP_VERSION='v4.71';
 const CHANGELOG=[
+  {version:'v4.71',date:'2026-06-15',changes:['URGENT: claude-sonnet-4-20250514 retired by Anthropic on June 15, 2026 — all chat API calls were failing. Updated to claude-sonnet-4-6 in all 3 locations']},
   {version:'v4.70',date:'2026-06-15',changes:['New undo_last_change chat tool: "undo that" reverses the most recent stock change per product by reading change_log and applying the inverse delta','Undo also reverses the location adjustment if the original change specified one','Undo actions are logged with an "Undo:" prefix so they cannot be re-undone accidentally']},
   {version:'v4.69',date:'2026-06-14',changes:['New Locations settings panel in Purchase Orders: store contact name, email, phone, address per location (Warehouse/EVI/Tripolac)','Send to Location button on each open PO emails a formatted PO summary via Resend','New API route /api/send-po-email handles the email send']},
   {version:'v4.68',date:'2026-06-13',changes:['Click any product photo (card, table, or edit modal) to view it full-size in a zoom overlay','Desktop table now shows a photo thumbnail column']},
@@ -944,7 +945,7 @@ function AppMain({session}){
         {role:'user',content:[{type:'tool_result',tool_use_id:toolUseBlock.id,content:JSON.stringify(toolResult)}]}
       ];
       const res2=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
+        model:'claude-sonnet-4-6',
         max_tokens:500,
         system:systemPrompt,
         tools:inventoryTools,
@@ -1128,7 +1129,7 @@ function AppMain({session}){
 
       // First API call with tools
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
+        model:'claude-sonnet-4-6',
         max_tokens:1000,
         system:systemPrompt,
         tools:inventoryTools,
@@ -1176,7 +1177,7 @@ function AppMain({session}){
           // Append assistant turn + tool results, then ask Claude to continue
           convo=[...convo,{role:'assistant',content:currentData.content},{role:'user',content:toolResults}];
           const resN=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-            model:'claude-sonnet-4-20250514',
+            model:'claude-sonnet-4-6',
             max_tokens:1000,
             system:systemPrompt,
             tools:inventoryTools,
