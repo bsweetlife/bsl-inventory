@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.68';
+const APP_VERSION='v4.69';
 const CHANGELOG=[
+  {version:'v4.69',date:'2026-06-14',changes:['New Locations settings panel in Purchase Orders: store contact name, email, phone, address per location (Warehouse/EVI/Tripolac)','Send to Location button on each open PO emails a formatted PO summary via Resend','New API route /api/send-po-email handles the email send']},
   {version:'v4.68',date:'2026-06-13',changes:['Click any product photo (card, table, or edit modal) to view it full-size in a zoom overlay','Desktop table now shows a photo thumbnail column']},
   {version:'v4.67',date:'2026-06-13',changes:['Removed emoji icons from Calculator and Purchase Orders nav labels']},
   {version:'v4.66',date:'2026-06-13',changes:['Mobile dashboard: product table replaced with card layout — name, status, stock, cost, price, total value all visible without horizontal scrolling','Product photo thumbnail shown on card if uploaded','Tap stock/cost/price on a card to open location/cost/price modals, same as desktop']},
@@ -247,6 +248,10 @@ function AppMain({session}){
   const[locations,setLocations]=useState([]);
   const[purchaseOrders,setPurchaseOrders]=useState([]);
   const[photoZoomModal,setPhotoZoomModal]=useState(null);
+  const[locationContacts,setLocationContacts]=useState([]);
+  const[showLocationSettings,setShowLocationSettings]=useState(false);
+  const[sendingPOEmail,setSendingPOEmail]=useState(null);
+  const[emailSending,setEmailSending]=useState(false);
   const[poModal,setPoModal]=useState(null);
   const[poReceiveModal,setPoReceiveModal]=useState(null);
   const[loading,setLoading]=useState(true);
@@ -291,10 +296,47 @@ function AppMain({session}){
   useEffect(()=>{if(chatMsgs.length===0)setChatMsgsSync([{role:'assistant',content:T[lang].chatPlaceholder}]);},[lang]);
   useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:'smooth'});},[chatMsgs]);
 
+  async function updateLocationContact(location,field,value){
+    // Optimistic local update
+    setLocationContacts(prev=>{
+      const existing=prev.find(c=>c.location===location);
+      if(existing)return prev.map(c=>c.location===location?{...c,[field]:value}:c);
+      return[...prev,{location,[field]:value}];
+    });
+    // Debounced save to Supabase
+    clearTimeout(window.__locContactTimer?.[location]);
+    window.__locContactTimer=window.__locContactTimer||{};
+    window.__locContactTimer[location]=setTimeout(async()=>{
+      const current={...(locationContacts.find(c=>c.location===location)||{}),[field]:value,location};
+      await supabase.from('location_contacts').upsert(current,{onConflict:'location'});
+    },600);
+  }
+
+  async function sendPOEmail(po,location,contact){
+    setEmailSending(true);
+    try{
+      const res=await fetch('/api/send-po-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        po:{po_number:po.po_number,supplier:po.supplier,expected_date:po.expected_date,notes:po.notes,items:po.purchase_order_items},
+        location,contact,
+      })});
+      const data=await res.json();
+      if(!res.ok||data.error){
+        alert((lang==='es'?'Error al enviar: ':'Error sending: ')+(data.error?.message||data.error||res.status));
+      }else{
+        await supabase.from('change_log').insert({description:`PO #${po.po_number} emailed to ${location} (${contact.email})`,user_email:userEmail});
+        alert(lang==='es'?`✅ Enviado a ${location} (${contact.email})`:`✅ Sent to ${location} (${contact.email})`);
+      }
+    }catch(e){
+      alert((lang==='es'?'Error: ':'Error: ')+e.message);
+    }
+    setEmailSending(false);
+    setSendingPOEmail(null);
+  }
+
   async function loadAll(isFirstLoad=false){
     setLoading(true);
     try{
-      const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs},{data:locs},{data:pos}]=await Promise.all([
+      const[{data:p},{data:l},{data:h},{data:c},{data:n},{data:gs},{data:locs},{data:pos},{data:lc}]=await Promise.all([
         supabase.from('products').select('*').order('name'),
         supabase.from('change_log').select('*').order('created_at',{ascending:false}).limit(200),
         supabase.from('uploaded_files').select('file_hash'),
@@ -303,6 +345,7 @@ function AppMain({session}){
         supabase.from('global_settings').select('*'),
         supabase.from('inventory_locations').select('*'),
         supabase.from('purchase_orders').select('*,purchase_order_items(*)').order('created_at',{ascending:false}),
+        supabase.from('location_contacts').select('*'),
       ]);
       if(p)setProds(p);
       if(l)setLog(l);
@@ -312,6 +355,7 @@ function AppMain({session}){
       if(gs){const s={};gs.forEach(g=>s[g.key]=parseFloat(g.value));setGlobalSettings(prev=>({...prev,...s}));}
       if(locs)setLocations(locs);
       if(pos)setPurchaseOrders(pos);
+      if(lc)setLocationContacts(lc);
       // Load chat sessions separately (not blocking)
       loadChatSessions();
     }catch(e){console.error(e);}
@@ -1658,9 +1702,12 @@ function AppMain({session}){
           <div>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1.25rem',flexWrap:'wrap',gap:8}}>
               <div style={{fontSize:20,fontWeight:600}}>📦 {t.purchaseOrders}</div>
-              <button style={S.btnP} onClick={()=>setPoModal({po_number:'PO-'+Date.now().toString().slice(-6),supplier:'',expected_date:'',notes:'',status:'ordered',items:[{product_id:'',product_name:'',qty:'',unit_cost:''}]})}>
-                {t.newPO}
-              </button>
+              <div style={{display:'flex',gap:8}}>
+                <button style={S.btn} onClick={()=>setShowLocationSettings(true)}>📍 {lang==='es'?'Ubicaciones':'Locations'}</button>
+                <button style={S.btnP} onClick={()=>setPoModal({po_number:'PO-'+Date.now().toString().slice(-6),supplier:'',expected_date:'',notes:'',status:'ordered',items:[{product_id:'',product_name:'',qty:'',unit_cost:''}]})}>
+                  {t.newPO}
+                </button>
+              </div>
             </div>
 
             {/* Summary cards */}
@@ -1733,6 +1780,25 @@ function AppMain({session}){
                         {isOpen&&(
                           <button style={{...S.btn,color:'#28a745',borderColor:'#28a745',fontSize:11,fontWeight:600}} onClick={()=>setPoReceiveModal({po,receiveLocations:items.map(i=>({...i,location:'Warehouse'}))})}>✅ {t.poReceive}</button>
                         )}
+                        {isOpen&&(
+                          <button style={{...S.btn,color:'#1565c0',borderColor:'#1565c0',fontSize:11,fontWeight:600}} onClick={()=>setSendingPOEmail(sendingPOEmail===po.id?null:po.id)}>📧 {lang==='es'?'Enviar':'Send'}</button>
+                        )}
+                        {sendingPOEmail===po.id&&(
+                          <div style={{background:'#f9f9f9',borderRadius:8,padding:8,fontSize:11,display:'flex',flexDirection:'column',gap:4}}>
+                            <div style={{fontWeight:600,color:'#555'}}>{lang==='es'?'Enviar a:':'Send to:'}</div>
+                            {['Warehouse','EVI','Tripolac'].map(loc=>{
+                              const contact=locationContacts.find(c=>c.location===loc);
+                              const hasEmail=!!contact?.email;
+                              return(
+                                <button key={loc} disabled={!hasEmail||emailSending} style={{...S.btn,fontSize:11,justifyContent:'space-between',opacity:hasEmail?1:0.4}}
+                                  onClick={()=>sendPOEmail(po,loc,contact)}>
+                                  <span>{loc}</span>
+                                  <span style={{color:'#aaa',fontSize:10}}>{hasEmail?contact.email:(lang==='es'?'sin correo':'no email')}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                         <button style={{...S.btn,fontSize:11}} onClick={()=>setPoModal({...po,items:items.map(i=>({product_id:i.product_id,product_name:i.product_name,qty:i.qty,unit_cost:i.unit_cost}))})}>✏️ Edit</button>
                         {isOpen&&<button style={{...S.btn,color:'#dc3545',borderColor:'#f5c6cb',fontSize:11}} onClick={async()=>{if(!window.confirm('Cancel this PO?'))return;await supabase.from('purchase_orders').update({status:'cancelled'}).eq('id',po.id);await loadAll();}}>✕ Cancel</button>}
                       </div>
@@ -1803,6 +1869,47 @@ function AppMain({session}){
       {costModal&&<CostBreakdownModal prod={costModal} globalSettings={globalSettings} S={S} lang={lang} onClose={()=>setCostModal(null)} onSaveSettings={saveGlobalSettings}/>}
       {modal==='note'&&<NoteModal t={t} S={S} mdata={mdata} setMdata={setMdata} onSave={async(form)=>{if(form.id)await supabase.from('agent_notes').update(form).eq('id',form.id);else await supabase.from('agent_notes').insert(form);await loadAll();setModal(null);}} onClose={()=>setModal(null)}/>}
       {showChangelog&&<ChangelogModal onClose={()=>setShowChangelog(false)} S={S}/>}
+
+      {/* LOCATION SETTINGS MODAL */}
+      {showLocationSettings&&(
+        <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&setShowLocationSettings(false)}>
+          <div style={{...S.sheet,maxWidth:520,maxHeight:'85vh',overflowY:'auto'}}>
+            <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>📍 {lang==='es'?'Información de Ubicaciones':'Location Information'}</div>
+            <div style={{fontSize:12,color:'#888',marginBottom:'1rem'}}>{lang==='es'?'Esta información se usa para enviar órdenes de compra por correo a cada ubicación.':'This info is used to email purchase orders to each location.'}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:14}}>
+              {['Warehouse','EVI','Tripolac'].map(loc=>{
+                const contact=locationContacts.find(c=>c.location===loc)||{location:loc,email:'',phone:'',address:'',contact_name:''};
+                return(
+                  <div key={loc} style={{border:'1px solid #eee',borderRadius:10,padding:'12px 14px'}}>
+                    <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>{loc}</div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                        <label style={{fontSize:11,color:'#888'}}>{lang==='es'?'Nombre de Contacto':'Contact Name'}</label>
+                        <input style={S.inp} value={contact.contact_name||''} onChange={e=>updateLocationContact(loc,'contact_name',e.target.value)}/>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                        <label style={{fontSize:11,color:'#888'}}>Email</label>
+                        <input style={S.inp} type="email" value={contact.email||''} onChange={e=>updateLocationContact(loc,'email',e.target.value)}/>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                        <label style={{fontSize:11,color:'#888'}}>{lang==='es'?'Teléfono':'Phone'}</label>
+                        <input style={S.inp} value={contact.phone||''} onChange={e=>updateLocationContact(loc,'phone',e.target.value)}/>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:3,gridColumn:'1/-1'}}>
+                        <label style={{fontSize:11,color:'#888'}}>{lang==='es'?'Dirección':'Address'}</label>
+                        <input style={S.inp} value={contact.address||''} onChange={e=>updateLocationContact(loc,'address',e.target.value)}/>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:'1rem'}}>
+              <button style={S.btnP} onClick={()=>setShowLocationSettings(false)}>{lang==='es'?'Cerrar':'Close'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* PHOTO ZOOM MODAL */}
       {photoZoomModal&&(
