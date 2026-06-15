@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.71';
+const APP_VERSION='v4.72';
 const CHANGELOG=[
+  {version:'v4.72',date:'2026-06-15',changes:['New physical_count chat tool: give per-location counts (Warehouse/EVI/Tripolac) for products during a recount — self-correcting, overwrites total stock + all locations in one step','Safety check: any stock update changing total stock by >30% now requires explicit user confirmation before applying — prevents units/boxes conversion mistakes like the -888 incident','Confirmation flow applies to update_stock, bulk_update_stock, and physical_count']},
   {version:'v4.71',date:'2026-06-15',changes:['URGENT: claude-sonnet-4-20250514 retired by Anthropic on June 15, 2026 — all chat API calls were failing. Updated to claude-sonnet-4-6 in all 3 locations']},
   {version:'v4.70',date:'2026-06-15',changes:['New undo_last_change chat tool: "undo that" reverses the most recent stock change per product by reading change_log and applying the inverse delta','Undo also reverses the location adjustment if the original change specified one','Undo actions are logged with an "Undo:" prefix so they cannot be re-undone accidentally']},
   {version:'v4.69',date:'2026-06-14',changes:['New Locations settings panel in Purchase Orders: store contact name, email, phone, address per location (Warehouse/EVI/Tripolac)','Send to Location button on each open PO emails a formatted PO summary via Resend','New API route /api/send-po-email handles the email send']},
@@ -599,7 +600,8 @@ function AppMain({session}){
           product_name:{type:'string',description:'Name of the product for confirmation'},
           new_stock:{type:'number',description:'The new TOTAL stock level in singles after the update'},
           location:{type:'string',enum:['Warehouse','EVI','Tripolac'],description:'Which physical location the stock change happens at. NEVER guess — ask the user if not specified.'},
-          reason:{type:'string',description:'Brief reason for the update e.g. "manual adjustment", "received shipment", "direct sale"'}
+          reason:{type:'string',description:'Brief reason for the update e.g. "manual adjustment", "received shipment", "direct sale"'},
+          _confirmed:{type:'boolean',description:'Set to true only when re-calling this tool after the user has explicitly confirmed a large (>30%) stock change.'}
         },
         required:['product_id','product_name','new_stock','location','reason']
       }
@@ -644,7 +646,7 @@ function AppMain({session}){
     },
     {
       name:'bulk_update_stock',
-      description:'Update stock for multiple products at once. Use this when the user provides a list of products with quantities — e.g. pasted inventory counts, box counts, or shipment lists. Convert boxes×units to singles before calling. Call this ONCE with the full array. REQUIRES a location per item — if the user did not say which location, ASK them before calling. location_mode: use "adjust" for sales deductions and received shipments (the change is applied to that location only), use "set_count" ONLY for a full physical inventory count (sets that location to the value and zeros the other locations).',
+      description:'Update stock for multiple products at once. Use this when the user provides a list of products with quantities — e.g. shipment lists or sales deductions. Convert boxes×units to singles before calling. Call this ONCE with the full array. REQUIRES a location per item — if the user did not say which location, ASK them before calling. location_mode: use "adjust" for sales deductions and received shipments (the change is applied to that location only), use "set_count" for a full physical inventory count of ONE location (sets that location to the value and zeros the other locations). NOTE: if the user is giving counts for MULTIPLE locations per product (e.g. "Warehouse X, EVI Y, Tripolac Z"), use the physical_count tool instead — it is safer and self-correcting.',
       input_schema:{
         type:'object',
         properties:{
@@ -663,9 +665,36 @@ function AppMain({session}){
               },
               required:['product_id','product_name','new_stock','location','reason']
             }
-          }
+          },
+          _confirmed:{type:'boolean',description:'Set to true only when re-calling this tool after the user has explicitly confirmed large (>30%) stock changes.'}
         },
         required:['updates']
+      }
+    },
+    {
+      name:'physical_count',
+      description:'Record a FULL PHYSICAL INVENTORY COUNT for one or more products. Use this when the user is doing a recount/audit and gives you the actual counted quantity at EACH location (Warehouse, EVI, Tripolac) for a product — e.g. "physical count: 16oz milk — Warehouse 850, EVI 100, Tripolac 0". This OVERWRITES all three location quantities AND sets total stock to their sum, regardless of what the previous numbers were. This is the SAFEST and self-correcting way to fix inventory — prefer it whenever the user is doing a count/audit rather than reporting a single sale or shipment. Omit a location if the user did not mention it for that product (it will be left unchanged) — but if the user gives all three, all three are set.',
+      input_schema:{
+        type:'object',
+        properties:{
+          counts:{
+            type:'array',
+            description:'One entry per product being counted',
+            items:{
+              type:'object',
+              properties:{
+                product_id:{type:'number',description:'Numeric ID of the product'},
+                product_name:{type:'string',description:'Name of the product'},
+                warehouse:{type:'number',description:'Counted quantity in Warehouse (singles). Omit if not provided by user for this product.'},
+                evi:{type:'number',description:'Counted quantity in EVI (singles). Omit if not provided by user for this product.'},
+                tripolac:{type:'number',description:'Counted quantity in Tripolac (singles). Omit if not provided by user for this product.'}
+              },
+              required:['product_id','product_name']
+            }
+          },
+          _confirmed:{type:'boolean',description:'Set to true only when re-calling this tool after the user has explicitly confirmed a large (>30%) change.'}
+        },
+        required:['counts']
       }
     },
     {
@@ -729,9 +758,13 @@ function AppMain({session}){
 
   async function executeToolCall(toolName, toolInput){
     if(toolName==='update_stock'){
-      const{product_id,product_name,new_stock,location,reason}=toolInput;
+      const{product_id,product_name,new_stock,location,reason,_confirmed}=toolInput;
       const old_stock=await getFreshStock(product_id);
       if(old_stock===null)return{success:false,error:`Product ID ${product_id} not found`};
+      const pctChange=old_stock>0?Math.abs(new_stock-old_stock)/old_stock:(new_stock>0?1:0);
+      if(pctChange>0.3&&!_confirmed){
+        return{success:false,needsConfirmation:true,message:`⚠️ This changes ${product_name} stock from ${old_stock} to ${new_stock} (${pctChange>=1?'>100':Math.round(pctChange*100)}% change) — that's a big swing. Please confirm with the user this is correct (not a units/boxes mistake) before proceeding. If confirmed, call update_stock again with the same arguments plus _confirmed:true.`};
+      }
       const{error}=await supabase.from('products').update({stock:new_stock}).eq('id',product_id);
       if(error)return{success:false,error:`Failed to update ${product_name}: ${error.message}`};
       if(location)await adjustLocationQty(product_id,location,new_stock-old_stock);
@@ -767,12 +800,18 @@ function AppMain({session}){
       return{success:true,message:`Bulk field update complete:\n${results.join('\n')}`};
     }
     if(toolName==='bulk_update_stock'){
-      const{updates}=toolInput;
+      const{updates,_confirmed}=toolInput;
       if(!updates||!updates.length)return{success:false,error:'No updates provided'};
       const results=[];
+      const bigChanges=[];
       for(const u of updates){
         const old_stock=await getFreshStock(u.product_id);
         if(old_stock===null){results.push(`❌ ID ${u.product_id} not found`);continue;}
+        const pctChange=old_stock>0?Math.abs(u.new_stock-old_stock)/old_stock:(u.new_stock>0?1:0);
+        if(pctChange>0.3&&!_confirmed){
+          bigChanges.push(`${u.product_name}: ${old_stock} → ${u.new_stock} (${pctChange>=1?'>100':Math.round(pctChange*100)}% change)`);
+          continue;
+        }
         // Update product total stock
         const{error}=await supabase.from('products').update({stock:u.new_stock}).eq('id',u.product_id);
         if(error){results.push(`❌ ${u.product_name}: ${error.message}`);continue;}
@@ -805,8 +844,56 @@ function AppMain({session}){
           results.push(`✅ ${u.product_name}: ${old_stock} → ${u.new_stock}`);
         }
       }
+      if(bigChanges.length){
+        return{success:false,needsConfirmation:true,message:`⚠️ The following changes are larger than 30% and need confirmation before applying:\n${bigChanges.join('\n')}\n\nPlease confirm with the user this is correct (not a units/boxes mistake) before proceeding. If confirmed, call bulk_update_stock again with the same updates array plus _confirmed:true.`};
+      }
       await loadAll();
       return{success:true,message:`Bulk update complete:\n${results.join('\n')}`};
+    }
+    if(toolName==='physical_count'){
+      const{counts}=toolInput;
+      if(!counts||!counts.length)return{success:false,error:'No counts provided'};
+      const LOCS=[['warehouse','Warehouse'],['evi','EVI'],['tripolac','Tripolac']];
+      const results=[];
+      const bigChanges=[];
+      for(const c of counts){
+        const fresh=await getFreshStock(c.product_id);
+        if(fresh===null){results.push(`❌ ID ${c.product_id} not found`);continue;}
+        // Get current location values to fill in any omitted locations
+        const{data:currentLocs}=await supabase.from('inventory_locations').select('location,qty').eq('product_id',c.product_id);
+        const currentMap={};
+        (currentLocs||[]).forEach(l=>currentMap[l.location]=parseFloat(l.qty)||0);
+        let newTotal=0;
+        const setVals={};
+        for(const[key,locName]of LOCS){
+          const val=c[key]!==undefined&&c[key]!==null?parseFloat(c[key]):currentMap[locName]||0;
+          setVals[locName]=val;
+          newTotal+=val;
+        }
+        // Flag big swings for confirmation
+        const pctChange=fresh>0?Math.abs(newTotal-fresh)/fresh:(newTotal>0?1:0);
+        if(pctChange>0.3&&!toolInput._confirmed){
+          bigChanges.push(`${c.product_name}: ${fresh} → ${newTotal} (${pctChange>=1?'>100':Math.round(pctChange*100)}% change)`);
+          continue;
+        }
+        // Apply: update products.stock and set each location
+        await supabase.from('products').update({stock:newTotal}).eq('id',c.product_id);
+        for(const[key,locName]of LOCS){
+          const{data:existing}=await supabase.from('inventory_locations').select('id').eq('product_id',c.product_id).eq('location',locName).single();
+          if(existing){
+            await supabase.from('inventory_locations').update({qty:setVals[locName],updated_at:new Date().toISOString()}).eq('id',existing.id);
+          }else{
+            await supabase.from('inventory_locations').insert({product_id:c.product_id,location:locName,qty:setVals[locName],notes:''});
+          }
+        }
+        await supabase.from('change_log').insert({description:`Physical count: ${c.product_name} ${fresh}→${newTotal} (W:${setVals.Warehouse} EVI:${setVals.EVI} Tripolac:${setVals.Tripolac})`,qty_change:newTotal-fresh,user_email:userEmail});
+        results.push(`✅ ${c.product_name}: ${fresh} → ${newTotal} (Warehouse: ${setVals.Warehouse}, EVI: ${setVals.EVI}, Tripolac: ${setVals.Tripolac})`);
+      }
+      if(bigChanges.length){
+        return{success:false,needsConfirmation:true,message:`⚠️ The following changes are larger than 30% and need confirmation before applying:\n${bigChanges.join('\n')}\n\nIf these counts are correct, ask the user to confirm, then call physical_count again with the same data plus _confirmed:true.`};
+      }
+      await loadAll();
+      return{success:true,message:`Physical count recorded:\n${results.join('\n')}`};
     }
     if(toolName==='transfer_stock'){
       const{product_id,product_name,qty,from_location,to_location,reason}=toolInput;
@@ -1115,7 +1202,7 @@ function AppMain({session}){
 
       const replyLang=lang==='es'?'Spanish':'English';
       const voiceInstruction=voiceText?` VOICE MODE: Your response will be read aloud. Keep answers SHORT and conversational — 1-3 sentences max. No bullet points, no markdown, no lists. Speak naturally like you're talking, not writing. For inventory questions give just the key number and status, not every field.`:'';
-      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${replyLang}.${voiceInstruction} 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others). 10) When the user wants to MOVE stock between locations, USE the transfer_stock tool — total stock does not change. NEVER express a transfer as stock updates. 11) When the user says "undo", "undo that", "revert", or similar after a stock update — USE the undo_last_change tool with the product_ids of the products you JUST updated in your previous tool call(s) (visible in your own prior messages in this conversation). If you cannot determine which products were just changed, look at the recent activity log below and match by product name, then ask the user to confirm before undoing if there's ambiguity.${notesContext}\n\n${inventoryContext}${recentLog}`;
+      const systemPrompt=`You are Claude, the inventory manager for BSL (Blooming Sweet Life Corp). You have tools to directly update inventory. RULES: 1) All stock in SINGLES. 2) When user asks to update stock for ONE product, USE the update_stock tool. 3) When user pastes or provides a LIST of products with quantities, USE the bulk_update_stock tool with ALL products in a single call — never loop one by one. 4) For boxes×units, multiply to get singles (e.g. 60 boxes × 12 units = 720 singles). 5) Always confirm what you did after using a tool. 6) Be concise. Respond in ${replyLang}.${voiceInstruction} 7) IMPORTANT: When the user asks to clear, reset, or zero all stock/inventory — call the clear_all_stock tool IMMEDIATELY with a reason. Do NOT ask for a password in chat — the app handles password confirmation automatically. Just call the tool. 8) When the user provides costs, prices, or other field values for MULTIPLE products, USE the bulk_update_fields tool with ALL products in a single call. NEVER just state the values in text — if the user asked for an update, you MUST call the tool, otherwise nothing is saved to the database. 9) LOCATION IS MANDATORY for every stock change: every update_stock and bulk_update_stock call needs a location (Warehouse, EVI, or Tripolac). If the user did NOT say which location, ASK them which location BEFORE calling any stock tool — never guess. One question covering the whole batch is fine. Use location_mode "adjust" for sales deductions and received shipments; use "set_count" ONLY when the user gives a full physical inventory count (it overwrites that location and zeros the others). 10) When the user wants to MOVE stock between locations, USE the transfer_stock tool — total stock does not change. NEVER express a transfer as stock updates. 11) When the user says "undo", "undo that", "revert", or similar after a stock update — USE the undo_last_change tool with the product_ids of the products you JUST updated in your previous tool call(s) (visible in your own prior messages in this conversation). If you cannot determine which products were just changed, look at the recent activity log below and match by product name, then ask the user to confirm before undoing if there's ambiguity. 12) PHYSICAL INVENTORY COUNTS: when the user is doing a recount/audit and gives counted quantities for multiple locations (Warehouse/EVI/Tripolac) per product, USE the physical_count tool — it overwrites all three locations and total stock in one self-correcting step, regardless of prior data drift. Prefer it over bulk_update_stock for counting sessions. 13) SAFETY CHECK: if update_stock, bulk_update_stock, or physical_count returns needsConfirmation:true, STOP — do not retry automatically. Tell the user exactly what changed and by how much, ask them to confirm it's correct (and not a units/boxes conversion mistake), and only re-call the same tool with _confirmed:true after they explicitly say yes.${notesContext}\n\n${inventoryContext}${recentLog}`;
 
       // Build messages array — replace last if file attached
       const apiMsgs=newMsgs.filter(m=>m.role!=='system'&&m.content&&typeof m.content==='string'&&m.content.trim()).map((m,i,arr)=>{
