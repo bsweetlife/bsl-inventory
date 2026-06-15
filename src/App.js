@@ -76,8 +76,9 @@ const hs=s=>{let h=0;for(let i=0;i<Math.min(s.length,500);i++)h=(Math.imul(31,h)
 const fc=(hdrs,cs)=>{for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().replace(/[\s_-]+/g,'-')===c);if(i>=0)return i;}for(const c of cs){const i=hdrs.findIndex(h=>h.toLowerCase().includes(c.replace(/-/g,'')));if(i>=0)return i;}return -1};
 const ep=()=>({id:null,name:'',sku:'',upc:'',photo_url:'',category:'',stock:'',velocity:'',cost:'',price:'',reorder:'',supplier:'',amz:'',wmt:'',tgt:'',temu:'',other_sku:'',amz_pack_size:1,wmt_pack_size:1,tgt_pack_size:1,temu_pack_size:1,other_pack_size:1,product_type:'finished',weight_oz:'',raw_material_cost_per_kg:'',packaging_cost:'',box_cost:'',jumbo_box_cost:'',cost_notes:''});
 
-const APP_VERSION='v4.72';
+const APP_VERSION='v4.73';
 const CHANGELOG=[
+  {version:'v4.73',date:'2026-06-15',changes:['Purchase Order Supplier field is now a dropdown: Warehouse, EVI, or Tripolac']},
   {version:'v4.72',date:'2026-06-15',changes:['New physical_count chat tool: give per-location counts (Warehouse/EVI/Tripolac) for products during a recount — self-correcting, overwrites total stock + all locations in one step','Safety check: any stock update changing total stock by >30% now requires explicit user confirmation before applying — prevents units/boxes conversion mistakes like the -888 incident','Confirmation flow applies to update_stock, bulk_update_stock, and physical_count']},
   {version:'v4.71',date:'2026-06-15',changes:['URGENT: claude-sonnet-4-20250514 retired by Anthropic on June 15, 2026 — all chat API calls were failing. Updated to claude-sonnet-4-6 in all 3 locations']},
   {version:'v4.70',date:'2026-06-15',changes:['New undo_last_change chat tool: "undo that" reverses the most recent stock change per product by reading change_log and applying the inverse delta','Undo also reverses the location adjustment if the original change specified one','Undo actions are logged with an "Undo:" prefix so they cannot be re-undone accidentally']},
@@ -2061,7 +2062,12 @@ function AppMain({session}){
                 </div>
                 <div style={{display:'flex',flexDirection:'column',gap:3}}>
                   <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.poSupplier}</label>
-                  <input style={S.inp} placeholder="e.g. EVI Labs, Amazon Vendor" value={poModal.supplier||''} onChange={e=>setPoModal(p=>({...p,supplier:e.target.value}))}/>
+                  <select style={S.inp} value={poModal.supplier||''} onChange={e=>setPoModal(p=>({...p,supplier:e.target.value}))}>
+                    <option value="">— {lang==='es'?'Seleccionar':'Select'} —</option>
+                    <option value="Warehouse">Warehouse</option>
+                    <option value="EVI">EVI</option>
+                    <option value="Tripolac">Tripolac</option>
+                  </select>
                 </div>
                 <div style={{display:'flex',flexDirection:'column',gap:3}}>
                   <label style={{fontSize:11,color:'#888',fontWeight:500}}>{t.poExpected}</label>
